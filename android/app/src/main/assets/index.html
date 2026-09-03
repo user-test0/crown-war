@@ -724,7 +724,9 @@ function buildHand(){
     el.className='card'; el.dataset.card=card;
     el.innerHTML = `<div class="cost">${def.cost}</div><div class="emoji">${def.emoji}</div><div class="cname">${def.name}</div>`;
     el.onclick = () => {
-      if (me.elixir < def.cost){ toast('圣水不足'); sfx.error(); return; }
+      // 读最新快照的圣水，避免闭包里的旧数值误报"圣水不足"
+      const cur = S.snap && S.snap.players[S.mySide];
+      if (!cur || cur.elixir < def.cost){ toast('圣水不足'); sfx.error(); return; }
       if (S.selected===card) S.selected=null;
       else { S.selected=card; beep(700,.06,'sine',.06); }
       updateHandUI();
