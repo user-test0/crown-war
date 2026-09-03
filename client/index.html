@@ -73,21 +73,18 @@
   <!-- 主菜单 -->
   <div class="screen active" id="menuScreen">
     <h1 class="logo">皇室对决</h1>
-    <div class="sub">CROWN WAR · 联机对战</div>
+    <div class="sub">CROWN WAR · 免服务器联机版</div>
     <div class="panel">
       <div class="label">你的昵称</div>
       <div class="row"><input type="text" id="nameInput" maxlength="10" placeholder="输入昵称"></div>
-      <div class="label">服务器地址（和朋友联机需填同一个）</div>
-      <div class="row"><input type="text" id="serverInput" placeholder="ws://IP:3000"></div>
-      <button class="btn gold" id="btnQuick">⚔️ 快速匹配</button>
-      <button class="btn blue" id="btnCreate">🏠 创建房间（好友约战）</button>
+      <button class="btn gold" id="btnCreate">🏠 创建房间（好友约战）</button>
       <div class="row" style="margin-top:10px">
         <input type="text" id="joinCode" maxlength="4" placeholder="房间号" inputmode="numeric" style="text-align:center;letter-spacing:4px">
         <button class="btn green small" id="btnJoin" style="flex:none;padding:10px 18px">加入</button>
       </div>
       <button class="btn gray" id="btnBot">🤖 人机练习</button>
     </div>
-    <div class="hint" style="margin-top:14px">部署军队，摧毁对方的国王塔！<br>3 分钟决胜负，加时赛首冠定输赢</div>
+    <div class="hint" style="margin-top:14px">无需服务器：一人创建房间，把 4 位房间号发给朋友<br>对方输入房间号即可开战 · 部署军队摧毁对方国王塔！</div>
   </div>
 
   <!-- 等待房间 -->
@@ -129,17 +126,20 @@
       <div id="resultTitle">胜利!</div>
       <div id="resultCrowns">👑 0 - 0</div>
       <div class="hint" id="resultReason"></div>
-      <button class="btn gold" id="btnAgain">再来一局（快速匹配）</button>
+      <button class="btn gold" id="btnAgain">🏠 再开一个房间</button>
       <button class="btn gray" id="btnBackMenu">返回主菜单</button>
     </div>
   </div>
 
 </div>
 
+<script src="mqtt.min.js"></script>
 <script>
 'use strict';
 // ================= 常量与卡牌 =================
 const ARENA_W = 18, ARENA_H = 32, RIVER_Y = 16, BRIDGES = [3.5, 14.5];
+const TICK_MS = 100, MATCH_TIME = 180, OVERTIME = 60, ELIXIR_MAX = 10, ELIXIR_RATE = 1 / 2.8;
+
 const CARDS = {
   knight:    { name:'骑士',     cost:3, emoji:'🗡️', kind:'unit' },
   archers:   { name:'弓箭手',   cost:3, emoji:'🏹', kind:'unit' },
@@ -150,20 +150,35 @@ const CARDS = {
   skeletons: { name:'骷髅兵',   cost:1, emoji:'💀', kind:'unit' },
   fireball:  { name:'火球术',   cost:4, emoji:'🔥', kind:'spell' },
 };
+// 引擎数值定义
+const CARD_DEFS = {
+  knight:    { cost:3, kind:'unit', count:1, hp:1400, dmg:160, speed:1.0, range:0.9, hitSpeed:1.1, sight:5.5, radius:0.45 },
+  archers:   { cost:3, kind:'unit', count:2, hp:252,  dmg:96,  speed:1.0, range:5.0, hitSpeed:1.2, sight:5.5, radius:0.35 },
+  giant:     { cost:5, kind:'unit', count:1, hp:3300, dmg:210, speed:0.5, range:1.1, hitSpeed:1.5, sight:7.5, radius:0.6, onlyBuildings:true },
+  minipekka: { cost:4, kind:'unit', count:1, hp:1150, dmg:520, speed:1.6, range:0.9, hitSpeed:1.8, sight:5.5, radius:0.45 },
+  goblins:   { cost:2, kind:'unit', count:3, hp:180,  dmg:105, speed:1.7, range:0.7, hitSpeed:1.1, sight:5.5, radius:0.3 },
+  musketeer: { cost:4, kind:'unit', count:1, hp:620,  dmg:190, speed:1.0, range:6.0, hitSpeed:1.1, sight:6.5, radius:0.4 },
+  skeletons: { cost:1, kind:'unit', count:3, hp:72,   dmg:62,  speed:1.7, range:0.7, hitSpeed:1.0, sight:5.5, radius:0.28 },
+  fireball:  { cost:4, kind:'spell', dmg:480, radius:2.5, towerFactor:0.35 },
+};
+const DECK = Object.keys(CARD_DEFS);
+const TOWER_DEFS = {
+  princess: { hp:2500, dmg:120, range:7.5, hitSpeed:0.8 },
+  king:     { hp:4000, dmg:120, range:7.0, hitSpeed:1.0 },
+};
 const TOWER_EMOJI = { king:'👑', princess:'🏰' };
 
 // ================= 全局状态 =================
 const S = {
-  ws:null, connected:false,
-  mySide:0, room:null, token:null,
-  phase:'menu',            // menu|wait|battle|result
-  snap:null, prevSnap:null,
-  selected:null,
-  elixirLocal:6,
-  renderUnits:new Map(),   // id -> {x,y}
-  renderProj:new Map(),
-  name:'', server:'',
-  reconnectTimer:null, closedByUser:false,
+  role:null,            // 'host' 房主(跑模拟) | 'guest' 客机(渲染)
+  mode:null,            // 'online' | 'bot'
+  mySide:0, room:null,
+  phase:'menu',         // menu|wait|battle|result
+  snap:null, selected:null, elixirLocal:6,
+  renderUnits:new Map(), renderProj:new Map(),
+  name:'', foeName:'对手',
+  mq:null, tickTimer:null,
+  lastFoeTs:0, foeWarned:false,
 };
 
 const $ = id => document.getElementById(id);
@@ -172,7 +187,7 @@ const store = {
   set:(k,v)=>{ try { localStorage.setItem(k,v); } catch(_){} },
 };
 
-// ================= 音效（WebAudio 简易） =================
+// ================= 音效 =================
 let audioCtx = null;
 function beep(freq, dur, type, vol) {
   try {
@@ -194,7 +209,7 @@ const sfx = {
   error:()=>beep(180,.15,'square',.08),
 };
 
-// ================= 界面切换 =================
+// ================= 界面 =================
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   $(id).classList.add('active');
@@ -207,404 +222,625 @@ function banner(msg, ms) {
   const b = $('banner'); b.textContent = msg; b.style.opacity = 1;
   clearTimeout(b._h); b._h = setTimeout(()=>b.style.opacity=0, ms||1800);
 }
+function setConn(txt, color) {
+  const d = $('connDot'); d.textContent = txt; d.style.color = color;
+}
 
-// ================= 网络 =================
-function wsConnect() {
-  if (S.ws && (S.ws.readyState===WebSocket.OPEN||S.ws.readyState===WebSocket.CONNECTING)) return;
-  let url = S.server.trim();
-  if (!url) { toast('请先填写服务器地址'); sfx.error(); return; }
-  if (!/^wss?:\/\//.test(url)) url = 'ws://' + url;
-  setConn(false);
-  try { S.ws = new WebSocket(url); } catch(e) { toast('服务器地址无效'); return; }
-  S.ws.onopen = () => { setConn(true); };
-  S.ws.onmessage = (ev) => { let m; try{ m=JSON.parse(ev.data);}catch(_){return;} handleMsg(m); };
-  S.ws.onclose = () => {
-    setConn(false);
-    if (S.closedByUser) return;
-    if (S.phase==='battle' && S.room && S.token) scheduleReconnect();
-    else if (S.phase==='wait') { toast('连接断开，请重试'); showScreen('menuScreen'); S.phase='menu'; }
-  };
-  S.ws.onerror = () => {};
-}
-function setConn(ok) {
-  S.connected = ok;
-  const d = $('connDot');
-  d.textContent = ok ? '● 已连接' : '○ 连接中…';
-  d.style.color = ok ? '#9ccc65' : '#ffb74d';
-}
-function scheduleReconnect() {
-  if (S.reconnectTimer) return;
-  banner('网络波动，重连中…', 2500);
-  S.reconnectTimer = setTimeout(() => {
-    S.reconnectTimer = null;
-    wsConnect();
-    const tryJoin = () => { if (S.ws && S.ws.readyState===WebSocket.OPEN) send({t:'rejoin', room:S.room, token:S.token}); else setTimeout(tryJoin, 500); };
-    tryJoin();
-  }, 800);
-}
-function send(m) { if (S.ws && S.ws.readyState===WebSocket.OPEN) S.ws.send(JSON.stringify(m)); }
+// ================= 战斗引擎（房主手机运行，移植自服务器） =================
+const E = { units:[], projectiles:[], effects:[], towers:[], players:[null,null], nextId:1, elapsed:0, overtime:false, state:'idle', botSide:-1, botTimer:0, ev:[] };
+const dist2 = (a,b)=>{ const dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy; };
+const dist = (a,b)=>Math.sqrt(dist2(a,b));
+const clamp = (v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+const r1 = v=>Math.round(v*10)/10;
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
 
-function handleMsg(m) {
-  switch (m.t) {
-    case 'room':
-      S.room = m.code; S.token = m.token; S.mySide = m.side;
-      break;
-    case 'queued':
-      S.room = m.room;
-      $('waitTitle').textContent = '正在匹配对手…';
-      $('roomCodeShow').textContent = '';
-      break;
-    case 'start':
-      S.mySide = m.side; S.snap = m.snapshot; S.prevSnap = m.snapshot;
-      S.phase = 'battle'; S.selected = null;
-      S.elixirLocal = m.snapshot.players[S.mySide].elixir;
-      S.renderUnits.clear(); S.renderProj.clear();
-      showScreen('battleScreen');
-      banner('⚔️ 对战开始!');
-      buildHand(); resize();
-      break;
-    case 'state':
-      S.prevSnap = S.snap; S.snap = m.snapshot;
-      break;
-    case 'deployed':
-      if (m.side !== S.mySide) sfx.enemyDeploy();
-      break;
-    case 'towerDown':
-      sfx.tower();
-      banner(m.by === S.mySide ? '🎉 摧毁敌塔!' : '⚠️ 我方塔被摧毁!', 1500);
-      break;
-    case 'overtime':
-      banner('⚡ 加时赛! 双倍圣水', 2200);
-      break;
-    case 'end':
-      showResult(m);
-      break;
-    case 'peer':
-      if (!m.connected) banner('对手掉线，等待重连…', 3000);
-      else if (S.phase==='battle') banner('对手已重连', 1500);
-      break;
-    case 'rejoined':
-      S.mySide = m.side;
-      if (m.state === 'playing') {
-        S.snap = m.snapshot; S.prevSnap = m.snapshot;
-        S.phase='battle'; showScreen('battleScreen'); buildHand(); resize();
-        banner('重连成功!');
-      }
-      break;
-    case 'toast':
-      toast(m.msg); sfx.error();
-      break;
-    case 'error':
-      toast(m.msg); sfx.error();
-      if (S.phase==='wait') { showScreen('menuScreen'); S.phase='menu'; }
-      break;
-    case 'left':
-      S.room = null; S.token = null;
-      break;
+function makePlayer(side,name){
+  const deck = shuffle(DECK.slice());
+  return { side, name:name||('玩家'+(side+1)), elixir:6, elixirFrac:0, hand:deck.slice(0,4), next:deck.slice(4), crowns:0 };
+}
+function initBattlefield(){
+  E.units=[]; E.projectiles=[]; E.effects=[]; E.towers=[];
+  const mk=(side,kind,x,y)=>{ const d=TOWER_DEFS[kind]; E.towers.push({ id:E.nextId++, side, kind, x, y, hp:d.hp, maxHp:d.hp, alive:true, active:kind==='princess', cd:0 }); };
+  mk(0,'king',9,29.8); mk(0,'princess',4,27.5); mk(0,'princess',14,27.5);
+  mk(1,'king',9,2.2);  mk(1,'princess',4,4.5);  mk(1,'princess',14,4.5);
+}
+function startEngine(names, botSide){
+  E.nextId=1; E.elapsed=0; E.overtime=false; E.state='playing'; E.botSide=botSide; E.botTimer=2; E.ev=[];
+  E.players=[makePlayer(0,names[0]), makePlayer(1,names[1])];
+  initBattlefield();
+  S.snap = snapshot(); S.elixirLocal = 6;
+  S.renderUnits.clear(); S.renderProj.clear();
+}
+function enemyOf(s){ return s===0?1:0; }
+
+function handleDeploy(side, data){
+  if (E.state!=='playing') return null;
+  const p = E.players[side]; if (!p) return null;
+  const { card, x, y } = data||{};
+  const def = CARD_DEFS[card];
+  if (!def || !p.hand.includes(card)) return side===S.mySide ? '手中没有这张牌' : null;
+  if (p.elixir < def.cost) return side===S.mySide ? '圣水不足' : null;
+  const cx = clamp(+x,0.5,ARENA_W-0.5), cy = clamp(+y,0.5,ARENA_H-0.5);
+  if (def.kind==='unit') {
+    const ownMin = side===0 ? RIVER_Y+0.5 : 0.5, ownMax = side===0 ? ARENA_H-0.5 : RIVER_Y-0.5;
+    if (cy<ownMin || cy>ownMax) return side===S.mySide ? '只能部署在自己半场' : null;
+    spawnUnits(side, card, cx, cy);
+  } else castSpell(side, card, cx, cy);
+  p.elixir -= def.cost;
+  p.hand = p.hand.filter(c=>c!==card); p.hand.push(p.next.shift()); p.next.push(card);
+  E.ev.push({ t:'deployed', side, card, x:r1(cx), y:r1(cy) });
+  return null;
+}
+function spawnUnits(side, card, x, y){
+  const def = CARD_DEFS[card];
+  for (let i=0;i<def.count;i++){
+    const off = def.count>1 ? 0.55 : 0, ang=(i/def.count)*Math.PI*2;
+    E.units.push({ id:E.nextId++, side, type:card,
+      x:clamp(x+Math.cos(ang)*off,0.5,ARENA_W-0.5), y:clamp(y+Math.sin(ang)*off,0.5,ARENA_H-0.5),
+      hp:def.hp, maxHp:def.hp, cd:0, spawnCd:1.0 });
   }
+}
+function castSpell(side, card, x, y){
+  const def = CARD_DEFS[card];
+  E.effects.push({ id:E.nextId++, kind:'fireball', x, y, radius:def.radius, ttl:0.6 });
+  for (const u of E.units) if (u.side!==side && dist2(u,{x,y})<=def.radius*def.radius) u.hp-=def.dmg;
+  for (const t of E.towers) if (t.side!==side && t.alive && dist2(t,{x,y})<=def.radius*def.radius) damageTower(t, def.dmg*def.towerFactor, side);
+}
+function damageTower(t, dmg, bySide){
+  if (!t.alive) return;
+  t.hp -= dmg;
+  if (t.kind==='king') t.active = true;
+  if (t.hp<=0){
+    t.hp=0; t.alive=false;
+    const atk = E.players[bySide]; if (atk) atk.crowns += t.kind==='king'?3:1;
+    E.effects.push({ id:E.nextId++, kind:'boom', x:t.x, y:t.y, radius:1.6, ttl:0.8 });
+    if (t.kind==='princess'){ const k=E.towers.find(k=>k.side===t.side&&k.kind==='king'); if(k)k.active=true; }
+    E.ev.push({ t:'towerDown', side:t.side, kind:t.kind, by:bySide });
+    if (t.kind==='king') return endGame(bySide,'摧毁国王塔');
+    if (E.overtime) return endGame(bySide,'加时赛首冠');
+  }
+}
+function simUnits(dt){
+  for (const u of E.units){
+    if (u.spawnCd>0){ u.spawnCd-=dt; continue; }
+    const def = CARD_DEFS[u.type], enemy = enemyOf(u.side);
+    u.cd = Math.max(0,u.cd-dt);
+    let target=null, best=Infinity;
+    if (!def.onlyBuildings){
+      for (const o of E.units){ if(o.side!==enemy||o.hp<=0)continue; const d=dist(u,o); if(d<=def.sight&&d<best){best=d;target={kind:'unit',ref:o,d};} }
+    }
+    for (const t of E.towers){ if(t.side!==enemy||!t.alive)continue; const d=dist(u,t)-0.6; if(d<=def.sight&&d<best){best=d;target={kind:'tower',ref:t,d};} }
+    if (!target){
+      const et=E.towers.filter(t=>t.side===enemy&&t.alive);
+      const pr=et.filter(t=>t.kind==='princess'); const pool=pr.length?pr:et;
+      if(!pool.length)continue;
+      let bt=null,bd=Infinity; for(const t of pool){const d=dist(u,t); if(d<bd){bd=d;bt=t;}}
+      target={kind:'tower',ref:bt,d:bd,advance:true};
+    }
+    const tObj=target.ref;
+    const tRadius = target.kind==='tower' ? 0.9 : (CARD_DEFS[tObj.type]?CARD_DEFS[tObj.type].radius:0.4);
+    const reach = def.range + tRadius;
+    if (target.d<=reach){
+      if (u.cd<=0){
+        u.cd = def.hitSpeed;
+        if (def.range>=2) E.projectiles.push({ id:E.nextId++, side:u.side, x:u.x, y:u.y, tx:tObj.x, ty:tObj.y, targetId:tObj.id, targetKind:target.kind, speed:10, dmg:def.dmg });
+        else if (target.kind==='unit'){ tObj.hp-=def.dmg; E.effects.push({id:E.nextId++,kind:'hit',x:tObj.x,y:tObj.y,ttl:0.2}); }
+        else { damageTower(tObj,def.dmg,u.side); E.effects.push({id:E.nextId++,kind:'hit',x:tObj.x,y:tObj.y,ttl:0.2}); }
+      }
+      continue;
+    }
+    let gx=tObj.x, gy=tObj.y;
+    const needCross = (u.y<RIVER_Y)!==(gy<RIVER_Y);
+    if (needCross){
+      const b = BRIDGES.reduce((a,c)=>Math.abs(c-u.x)<Math.abs(a-u.x)?c:a);
+      const onBridge = Math.abs(u.x-b)<0.9;
+      if (!onBridge || (Math.abs(u.y-RIVER_Y)<1.2 && Math.abs(u.x-b)>=0.9)){
+        gx=b; gy = u.y>RIVER_Y ? RIVER_Y+0.4 : RIVER_Y-0.4;
+        if (Math.abs(u.x-b)>=0.9){ gx=b; gy=u.y; }
+      }
+    }
+    const dx=gx-u.x, dy=gy-u.y, d=Math.hypot(dx,dy)||1, step=def.speed*dt;
+    u.x=clamp(u.x+(dx/d)*step,0.4,ARENA_W-0.4); u.y=clamp(u.y+(dy/d)*step,0.4,ARENA_H-0.4);
+    if (Math.abs(u.y-RIVER_Y)<0.5){
+      const nearBridge = BRIDGES.some(b=>Math.abs(u.x-b)<1.1);
+      if (!nearBridge) u.y = u.side===0 ? RIVER_Y+0.5 : RIVER_Y-0.5;
+    }
+  }
+  for (let i=0;i<E.units.length;i++) for (let j=i+1;j<E.units.length;j++){
+    const a=E.units[i], b=E.units[j], d=dist(a,b), min=0.5;
+    if (d<min && d>0.001){ const push=(min-d)/2, dx=(b.x-a.x)/d, dy=(b.y-a.y)/d; a.x-=dx*push; a.y-=dy*push; b.x+=dx*push; b.y+=dy*push; }
+  }
+}
+function simTowers(dt){
+  for (const t of E.towers){
+    if (!t.alive||!t.active) continue;
+    t.cd = Math.max(0,t.cd-dt); if (t.cd>0) continue;
+    const def=TOWER_DEFS[t.kind], enemy=enemyOf(t.side);
+    let target=null,best=Infinity;
+    for (const u of E.units){ if(u.side!==enemy||u.hp<=0||u.spawnCd>0)continue; const d=dist(t,u); if(d<=def.range&&d<best){best=d;target=u;} }
+    if (target){ t.cd=def.hitSpeed; E.projectiles.push({ id:E.nextId++, side:t.side, x:t.x, y:t.y, tx:target.x, ty:target.y, targetId:target.id, targetKind:'unit', speed:12, dmg:def.dmg }); }
+  }
+}
+function simProjectiles(dt){
+  for (const p of E.projectiles){
+    const target = p.targetKind==='unit' ? E.units.find(u=>u.id===p.targetId&&u.hp>0) : E.towers.find(t=>t.id===p.targetId&&t.alive);
+    if (target){ p.tx=target.x; p.ty=target.y; }
+    const dx=p.tx-p.x, dy=p.ty-p.y, d=Math.hypot(dx,dy), step=p.speed*dt;
+    if (d<=step+0.15){ p.dead=true; if(target){ if(p.targetKind==='unit')target.hp-=p.dmg; else damageTower(target,p.dmg,p.side); E.effects.push({id:E.nextId++,kind:'hit',x:p.tx,y:p.ty,ttl:0.2}); } }
+    else { p.x+=(dx/d)*step; p.y+=(dy/d)*step; }
+  }
+  E.projectiles = E.projectiles.filter(p=>!p.dead);
+}
+function simBot(dt){
+  const p = E.players[E.botSide]; if (!p) return;
+  E.botTimer -= dt; if (E.botTimer>0) return;
+  E.botTimer = 1.6 + Math.random()*2.2;
+  const affordable = p.hand.filter(c=>CARD_DEFS[c].cost<=p.elixir);
+  if (!affordable.length) return;
+  const enemySide = enemyOf(E.botSide);
+  const threat = E.units.find(u=>u.side===enemySide && (E.botSide===0 ? u.y>RIVER_Y : u.y<RIVER_Y));
+  const card = affordable[Math.floor(Math.random()*affordable.length)];
+  let x,y;
+  if (threat && CARD_DEFS[card].kind==='unit'){
+    x = threat.x + (Math.random()-0.5)*2;
+    y = E.botSide===0 ? Math.max(threat.y+1, RIVER_Y+1.5) : Math.min(threat.y-1, RIVER_Y-1.5);
+  } else {
+    const lane = Math.random()<0.5?3.5:14.5;
+    x = lane + (Math.random()-0.5)*3;
+    y = E.botSide===0 ? RIVER_Y+3+Math.random()*4 : RIVER_Y-3-Math.random()*4;
+  }
+  handleDeploy(E.botSide, {card,x,y});
+}
+function engineTick(){
+  if (E.state!=='playing') return;
+  const dt = TICK_MS/1000;
+  E.elapsed += dt;
+  const total = MATCH_TIME + (E.overtime?OVERTIME:0), remaining = total - E.elapsed;
+  if (!E.overtime && E.elapsed>=MATCH_TIME){
+    const [a,b]=E.players.map(p=>p?p.crowns:0);
+    if (a!==b) return endGame(a>b?0:1,'时间结束');
+    E.overtime=true; E.ev.push({t:'overtime'});
+  } else if (remaining<=0){
+    const [a,b]=E.players.map(p=>p?p.crowns:0);
+    return endGame(a===b?-1:(a>b?0:1),'加时结束');
+  }
+  const double = E.overtime || E.elapsed>=MATCH_TIME-60;
+  for (const p of E.players){ if(!p)continue; if(p.elixir<ELIXIR_MAX){ p.elixirFrac += ELIXIR_RATE*(double?2:1)*dt; if(p.elixirFrac>=1){ p.elixir+=Math.floor(p.elixirFrac); p.elixirFrac%=1; p.elixir=Math.min(p.elixir,ELIXIR_MAX); } } }
+  simUnits(dt); simTowers(dt); simProjectiles(dt);
+  E.effects = E.effects.filter(e=>(e.ttl-=dt)>0);
+  E.units = E.units.filter(u=>u.hp>0);
+  if (E.botSide>=0) simBot(dt);
+}
+function snapshot(){
+  return {
+    time: Math.max(0, Math.ceil((E.overtime?MATCH_TIME+OVERTIME:MATCH_TIME) - E.elapsed)),
+    overtime: E.overtime,
+    towers: E.towers.map(t=>({ id:t.id, side:t.side, kind:t.kind, x:r1(t.x), y:r1(t.y), hp:Math.ceil(t.hp), maxHp:t.maxHp, alive:t.alive })),
+    units: E.units.map(u=>({ id:u.id, side:u.side, type:u.type, x:r1(u.x), y:r1(u.y), hp:Math.ceil(u.hp), maxHp:u.maxHp, spawn:u.spawnCd>0 })),
+    projectiles: E.projectiles.map(p=>({ id:p.id, side:p.side, x:r1(p.x), y:r1(p.y) })),
+    effects: E.effects.map(e=>({ id:e.id, kind:e.kind, x:r1(e.x), y:r1(e.y), radius:e.radius, ttl:r1(e.ttl) })),
+    players: E.players.map(p=>p?{ name:p.name, elixir:Math.floor(p.elixir), crowns:p.crowns, hand:p.hand, next:p.next[0]||null }:null),
+  };
+}
+function endGame(winner, reason){
+  if (E.state!=='playing') return;
+  E.state='ended';
+  E.ev.push({ t:'end', winner, reason, crowns:E.players.map(p=>p?p.crowns:0) });
+}
+
+// ================= 事件中转到本地 UI =================
+function applyEvent(e){
+  switch(e.t){
+    case 'deployed': if (e.side!==S.mySide) sfx.enemyDeploy(); break;
+    case 'towerDown': sfx.tower(); banner(e.by===S.mySide?'🎉 摧毁敌塔!':'⚠️ 我方塔被摧毁!',1500); break;
+    case 'overtime': banner('⚡ 加时赛! 双倍圣水',2200); break;
+    case 'end': stopTick(); showResult(e); break;
+  }
+}
+
+// ================= MQTT 中继（免费公共通道，无需注册） =================
+const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt', 'wss://test.mosquitto.org:8081/'];
+const T = () => 'cw26v1/' + S.room;
+function pub(suffix, m){ if (S.mq && S.mq.connected) try { S.mq.publish(T()+suffix, JSON.stringify(m)); } catch(_){} }
+
+function netConnect(onOk){
+  let bi=0, done=false;
+  const tryNext = () => {
+    if (bi>=BROKERS.length){ toast('无法连接中继通道，请检查网络'); sfx.error(); return; }
+    const url = BROKERS[bi++];
+    const c = mqtt.connect(url, { clientId:'cw'+Math.random().toString(36).slice(2,10), keepalive:30, reconnectPeriod:2500, connectTimeout:6000, clean:true });
+    S.mq = c;
+    const to = setTimeout(()=>{ if(!done){ try{c.end(true);}catch(_){} tryNext(); } }, 7000);
+    c.on('connect', ()=>{
+      if (!done){ done=true; clearTimeout(to); }
+      setConn('● 通道已连接','#9ccc65');
+      onMqUp();
+      if (onOk){ const f=onOk; onOk=null; f(); }
+    });
+    c.on('message', (topic, payload)=>{ let m; try{ m=JSON.parse(payload.toString()); }catch(_){ return; } onMsg(topic, m); });
+    c.on('error', ()=>{ if(!done){ clearTimeout(to); try{c.end(true);}catch(_){} tryNext(); } });
+  };
+  tryNext();
+}
+// 每次（重）连上后重新订阅 + 通知对方自己回来了
+function onMqUp(){
+  if (!S.room) return;
+  if (S.role==='host') {
+    S.mq.subscribe(T()+'/g/#');
+    if (S.phase==='battle') pub('/h/hi', { name:S.name });   // 房主重连：客机收到后恢复
+  } else {
+    S.mq.subscribe(T()+'/h/#');
+    if (S.phase==='battle') pub('/g/rejoin', { name:S.name }); // 客机重连：房主回发快照
+  }
+}
+
+function onMsg(topic, m){
+  const parts = topic.split('/');
+  const kind = parts[2] + (parts[3] ? '/'+parts[3] : '');
+  S.lastFoeTs = Date.now();
+  if (S.role==='host') {
+    switch(kind){
+      case 'g/join':
+        if (S.phase!=='wait') return;
+        S.foeName = m.name||'对手';
+        startOnlineBattle();
+        break;
+      case 'g/deploy':
+        if (S.phase!=='battle') return;
+        handleDeploy(1, m);
+        break;
+      case 'g/ping':
+        if (S.phase==='battle') pub('/h/pong', {});
+        break;
+      case 'g/rejoin':
+        if (S.phase==='battle') pub('/h/start', { snapshot:snapshot() });
+        break;
+      case 'g/bye':
+        if (S.phase==='battle') endGame(0, '对手离开');
+        break;
+    }
+  } else {
+    switch(kind){
+      case 'h/hi':
+        S.foeName = m.name||'对手';
+        if (S.phase==='battle'){ setConn('● 通道已连接','#9ccc65'); banner('房主已重连',1500); }
+        break;
+      case 'h/start':
+        S.snap = m.snapshot;
+        if (S.phase!=='battle'){ enterBattle(); } else { setConn('● 通道已连接','#9ccc65'); }
+        break;
+      case 'h/state':
+        S.snap = m.snapshot;
+        if (S.phase==='wait') enterBattle();
+        break;
+      case 'h/deployed': applyEvent(m); break;
+      case 'h/tower': applyEvent(m); break;
+      case 'h/ot': applyEvent(m); break;
+      case 'h/end': applyEvent(m); break;
+      case 'h/cancel':
+        if (S.phase==='wait'){ toast('房主已取消房间'); backToMenu(); }
+        break;
+    }
+  }
+}
+
+// 心跳：客机定时 ping；双方超时判定掉线
+setInterval(()=>{
+  if (S.phase!=='battle' || S.mode!=='online') return;
+  if (S.role==='guest') pub('/g/ping', {});
+  if (S.lastFoeTs && Date.now()-S.lastFoeTs > 7000 && !S.foeWarned){
+    S.foeWarned = true;
+    banner(S.role==='host' ? '对手掉线，等待重连…' : '房主掉线，等待重连…', 3000);
+    setConn('○ 对方掉线','#ffb74d');
+  }
+  if (S.lastFoeTs && Date.now()-S.lastFoeTs > 20000){
+    if (S.role==='host' && E.state==='playing'){ endGame(0,'对手掉线'); }
+    else { toast('对方长时间未响应，已返回菜单'); backToMenu(); }
+  }
+}, 2000);
+
+// ================= 流程 =================
+function startOnlineBattle(){
+  S.mySide = S.role==='host' ? 0 : 1;
+  startEngine(S.role==='host' ? [S.name, S.foeName] : [S.foeName, S.name], -1);
+  if (S.role==='host') pub('/h/start', { snapshot:S.snap });
+  enterBattle();
+}
+function enterBattle(){
+  S.phase='battle'; S.selected=null; S.foeWarned=false; S.lastFoeTs=Date.now();
+  if (S.joinRetry){ clearInterval(S.joinRetry); S.joinRetry=null; }
+  showScreen('battleScreen');
+  banner('⚔️ 对战开始!');
+  buildHand(); resize();
+  startTick();
+}
+function startTick(){
+  stopTick();
+  if (S.role==='host'){
+    S.tickTimer = setInterval(()=>{
+      engineTick();
+      const evs = E.ev; E.ev = [];
+      S.snap = snapshot();
+      if (S.mode==='online') pub('/h/state', { snapshot:S.snap });
+      for (const e of evs){
+        applyEvent(e);
+        if (S.mode==='online'){
+          if (e.t==='deployed') pub('/h/deployed', e);
+          else if (e.t==='towerDown') pub('/h/tower', e);
+          else if (e.t==='overtime') pub('/h/ot', e);
+          else if (e.t==='end') pub('/h/end', e);
+        }
+      }
+    }, TICK_MS);
+  }
+}
+function stopTick(){ if (S.tickTimer){ clearInterval(S.tickTimer); S.tickTimer=null; } }
+
+function backToMenu(){
+  stopTick();
+  S.phase='menu'; S.room=null; S.snap=null;
+  E.state='idle';
+  showScreen('menuScreen');
 }
 
 // ================= 菜单交互 =================
 $('nameInput').value = store.get('cw_name','');
-// 服务器地址：
-//  - 网页版（http/https 打开）：默认用页面自身地址（同源部署免填写，最可靠）
-//  - APK（file:// 打开）：无页面地址，用上次保存的值，需手动填写
-(function initServerInput(){
-  const isWeb = location.protocol === 'http:' || location.protocol === 'https:';
-  if (isWeb) {
-    const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-    $('serverInput').value = wsProto + '://' + location.host + '/';
-    $('serverInput').placeholder = '网页版自动使用当前地址';
-  } else {
-    $('serverInput').value = store.get('cw_server','');
-  }
-})();
-
-function prepare() {
+function prepare(){
   S.name = $('nameInput').value.trim() || '指挥官';
-  S.server = $('serverInput').value.trim();
-  store.set('cw_name', S.name); store.set('cw_server', S.server);
-  S.closedByUser = false;
-  if (!S.server) { toast('请填写服务器地址'); sfx.error(); return false; }
-  wsConnect();
+  store.set('cw_name', S.name);
   return true;
 }
-function whenConnected(fn) {
-  let tries = 0;
-  const t = setInterval(() => {
-    if (S.ws && S.ws.readyState===WebSocket.OPEN) { clearInterval(t); fn(); }
-    else if (++tries > 20) { clearInterval(t); toast('无法连接服务器，请检查地址'); }
-  }, 250);
-}
-$('btnQuick').onclick = () => { if (!prepare()) return; whenConnected(()=>{ send({t:'quick', name:S.name}); S.phase='wait'; $('waitTitle').textContent='正在匹配对手…'; $('roomCodeShow').textContent=''; $('waitSpinner').style.display='block'; showScreen('waitScreen'); }); };
-$('btnCreate').onclick = () => { if (!prepare()) return; whenConnected(()=>{ send({t:'create', name:S.name}); S.phase='wait'; $('waitTitle').textContent='等待对手加入…'; $('waitSpinner').style.display='block'; showScreen('waitScreen'); }); };
+$('btnCreate').onclick = () => {
+  if (!prepare()) return;
+  let code; do { code = String(Math.floor(1000+Math.random()*9000)); } while (false);
+  S.room = code; S.role='host'; S.mode='online'; S.mySide=0;
+  S.phase='wait';
+  showScreen('waitScreen');
+  $('waitTitle').textContent='等待对手加入…';
+  $('roomCodeShow').textContent=code;
+  $('waitSpinner').style.display='block';
+  setConn('○ 连接通道…','#ffb74d');
+  netConnect(()=>{ S.mq.subscribe(T()+'/g/#'); });
+};
 $('btnJoin').onclick = () => {
   const code = $('joinCode').value.trim();
-  if (!/^\d{4}$/.test(code)) { toast('请输入 4 位房间号'); sfx.error(); return; }
+  if (!/^\d{4}$/.test(code)){ toast('请输入 4 位房间号'); sfx.error(); return; }
   if (!prepare()) return;
-  whenConnected(()=>{ send({t:'join', code, name:S.name}); });
+  S.room = code; S.role='guest'; S.mode='online'; S.mySide=1;
+  S.phase='wait';
+  showScreen('waitScreen');
+  $('waitTitle').textContent='正在加入房间…';
+  $('roomCodeShow').textContent=code;
+  $('waitSpinner').style.display='block';
+  setConn('○ 连接通道…','#ffb74d');
+  netConnect(()=>{
+    S.mq.subscribe(T()+'/h/#', ()=>{ pub('/g/join', { name:S.name }); });
+    // 房主可能切去微信发房间号导致 App 短暂后台，客机持续重试加入
+    S.joinRetry = setInterval(()=>{ if (S.phase==='wait') pub('/g/join', { name:S.name }); else clearInterval(S.joinRetry); }, 3000);
+    setTimeout(()=>{ if (S.phase==='wait'){ clearInterval(S.joinRetry); toast('房主长时间不在线，请确认房间号'); backToMenu(); } }, 60000);
+  });
 };
-$('btnBot').onclick = () => { if (!prepare()) return; whenConnected(()=>send({t:'bot', name:S.name})); };
-$('btnCancelWait').onclick = () => { S.closedByUser = true; send({t:'leave'}); if (S.ws) S.ws.close(); S.phase='menu'; showScreen('menuScreen'); };
-$('btnAgain').onclick = () => { S.closedByUser=false; wsConnect(); whenConnected(()=>{ send({t:'quick', name:S.name}); S.phase='wait'; $('waitTitle').textContent='正在匹配对手…'; $('roomCodeShow').textContent=''; showScreen('waitScreen'); }); };
-$('btnBackMenu').onclick = () => { S.closedByUser = true; if (S.ws) S.ws.close(); S.phase='menu'; showScreen('menuScreen'); };
+$('btnBot').onclick = () => {
+  if (!prepare()) return;
+  S.role='host'; S.mode='bot'; S.mySide=0; S.room=null; S.foeName='电脑对手';
+  startEngine([S.name,'电脑对手'], 1);
+  setConn('🤖 本地人机','#8fa3d9');
+  enterBattle();
+};
+$('btnCancelWait').onclick = () => {
+  if (S.role==='host') pub('/h/cancel', {}); else pub('/g/bye', {});
+  backToMenu();
+};
+$('btnAgain').onclick = () => { $('btnCreate').onclick(); };
+$('btnBackMenu').onclick = () => { if (S.mode==='online'){ if(S.role==='host') pub('/h/cancel',{}); else pub('/g/bye',{}); } backToMenu(); };
 
 // ================= 手牌 UI =================
-function buildHand() {
+function buildHand(){
   const hand = $('hand');
   hand.querySelectorAll('.card').forEach(c=>c.remove());
   if (!S.snap) return;
   const me = S.snap.players[S.mySide];
+  if (!me) return;
   me.hand.forEach(card => {
     const def = CARDS[card];
     const el = document.createElement('div');
-    el.className = 'card'; el.dataset.card = card;
+    el.className='card'; el.dataset.card=card;
     el.innerHTML = `<div class="cost">${def.cost}</div><div class="emoji">${def.emoji}</div><div class="cname">${def.name}</div>`;
     el.onclick = () => {
-      if (me.elixir < def.cost) { toast('圣水不足'); sfx.error(); return; }
-      if (S.selected === card) { S.selected = null; }
-      else { S.selected = card; beep(700,.06,'sine',.06); }
+      if (me.elixir < def.cost){ toast('圣水不足'); sfx.error(); return; }
+      if (S.selected===card) S.selected=null;
+      else { S.selected=card; beep(700,.06,'sine',.06); }
       updateHandUI();
     };
     hand.appendChild(el);
   });
   updateHandUI();
 }
-function updateHandUI() {
+function updateHandUI(){
   if (!S.snap) return;
-  const me = S.snap.players[S.mySide];
+  const me = S.snap.players[S.mySide]; if (!me) return;
   document.querySelectorAll('.card').forEach(el => {
     const def = CARDS[el.dataset.card];
-    el.classList.toggle('selected', S.selected === el.dataset.card);
+    el.classList.toggle('selected', S.selected===el.dataset.card);
     el.classList.toggle('disabled', me.elixir < def.cost);
   });
   const nc = $('nextCard');
   if (me.next) nc.innerHTML = `<div class="emoji">${CARDS[me.next].emoji}</div>下一张`;
 }
-// 圣水条
 (function buildElixirBar(){
   const bar = $('elixirBar');
   for (let i=0;i<10;i++){ const s=document.createElement('div'); s.className='eseg'; s.innerHTML='<div class="fill"></div>'; bar.appendChild(s); }
 })();
-function updateElixirUI() {
+function updateElixirUI(){
   if (!S.snap) return;
-  const me = S.snap.players[S.mySide];
-  // 本地平滑：朝服务器值逼近
+  const me = S.snap.players[S.mySide]; if (!me) return;
   const target = me.elixir;
-  if (Math.abs(S.elixirLocal - target) > 1.2) S.elixirLocal = target;
-  else if (S.elixirLocal < target) S.elixirLocal = Math.min(target, S.elixirLocal + 0.02);
-  const v = Math.min(10, S.elixirLocal);
+  if (Math.abs(S.elixirLocal-target)>1.2) S.elixirLocal=target;
+  else if (S.elixirLocal<target) S.elixirLocal=Math.min(target,S.elixirLocal+0.02);
+  const v = Math.min(10,S.elixirLocal);
   $('elixirNum').textContent = me.elixir;
-  document.querySelectorAll('.eseg .fill').forEach((f,i) => {
-    f.style.transform = `scaleX(${Math.max(0, Math.min(1, v - i))})`;
-  });
+  document.querySelectorAll('.eseg .fill').forEach((f,i)=>{ f.style.transform=`scaleX(${Math.max(0,Math.min(1,v-i))})`; });
 }
 
 // ================= 战场渲染 =================
 const canvas = $('arena'), ctx = canvas.getContext('2d');
-let view = { scale:1, ox:0, oy:0, w:0, h:0, dpr:1 };
-
-function resize() {
+let view = { scale:1, w:0, h:0 };
+function resize(){
   const wrap = $('arenaWrap');
-  const availW = wrap.clientWidth - 8, availH = wrap.clientHeight - 8;
-  if (availW <= 0 || availH <= 0) return;
-  const ratio = ARENA_W / ARENA_H;
-  let w = availW, h = w / ratio;
-  if (h > availH) { h = availH; w = h * ratio; }
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
-  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
-  view = { scale: (w / ARENA_W) * dpr, dpr, w: canvas.width, h: canvas.height };
+  const availW = wrap.clientWidth-8, availH = wrap.clientHeight-8;
+  if (availW<=0||availH<=0) return;
+  const ratio = ARENA_W/ARENA_H;
+  let w=availW, h=w/ratio;
+  if (h>availH){ h=availH; w=h*ratio; }
+  const dpr = Math.min(window.devicePixelRatio||1,2);
+  canvas.width=Math.round(w*dpr); canvas.height=Math.round(h*dpr);
+  canvas.style.width=w+'px'; canvas.style.height=h+'px';
+  view = { scale:(w/ARENA_W)*dpr, w:canvas.width, h:canvas.height };
 }
 window.addEventListener('resize', resize);
-
-// 视角翻转：我方永远在下方
-function vx(x) { return S.mySide === 0 ? x : ARENA_W - x; }
-function vy(y) { return S.mySide === 0 ? y : ARENA_H - y; }
-function px(x) { return vx(x) * view.scale; }
-function py(y) { return vy(y) * view.scale; }
-function unitR() { return view.scale * 0.62; }
-
-function drawArena() {
-  const s = view.scale;
+function vx(x){ return S.mySide===0?x:ARENA_W-x; }
+function vy(y){ return S.mySide===0?y:ARENA_H-y; }
+function px(x){ return vx(x)*view.scale; }
+function py(y){ return vy(y)*view.scale; }
+function unitR(){ return view.scale*0.62; }
+function drawArena(){
+  const s=view.scale;
   ctx.clearRect(0,0,view.w,view.h);
-  // 草地
-  const g = ctx.createLinearGradient(0,0,0,view.h);
+  const g=ctx.createLinearGradient(0,0,0,view.h);
   g.addColorStop(0,'#4e8d3a'); g.addColorStop(0.5,'#5a9c44'); g.addColorStop(1,'#4e8d3a');
-  ctx.fillStyle = g; ctx.fillRect(0,0,view.w,view.h);
-  // 草皮条纹
-  ctx.fillStyle = 'rgba(255,255,255,0.045)';
-  for (let i=0;i<ARENA_H;i+=2) ctx.fillRect(0, py(i+2), view.w, s*1);
-  // 河道
-  ctx.fillStyle = '#3d7abf';
-  ctx.fillRect(0, py(RIVER_Y+0.5), view.w, s*1);
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
-  const wt = (Date.now()/600) % 1;
+  ctx.fillStyle=g; ctx.fillRect(0,0,view.w,view.h);
+  ctx.fillStyle='rgba(255,255,255,0.045)';
+  for (let i=0;i<ARENA_H;i+=2) ctx.fillRect(0,py(i+2),view.w,s*1);
+  ctx.fillStyle='#3d7abf'; ctx.fillRect(0,py(RIVER_Y+0.5),view.w,s*1);
+  ctx.fillStyle='rgba(255,255,255,0.15)';
+  const wt=(Date.now()/600)%1;
   for (let i=0;i<6;i++) ctx.fillRect((i*3+wt*3)%ARENA_W*s, py(RIVER_Y+0.5)+s*0.3, s*1.2, s*0.12);
-  // 桥
-  for (const b of BRIDGES) {
-    ctx.fillStyle = '#8d6e43';
-    ctx.fillRect(px(b)-s*0.95, py(RIVER_Y+0.6), s*1.9, s*1.2);
-    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  for (const b of BRIDGES){
+    ctx.fillStyle='#8d6e43'; ctx.fillRect(px(b)-s*0.95, py(RIVER_Y+0.6), s*1.9, s*1.2);
+    ctx.fillStyle='rgba(0,0,0,0.15)';
     for (let i=0;i<4;i++) ctx.fillRect(px(b)-s*0.95, py(RIVER_Y+0.6)+i*s*0.3, s*1.9, s*0.06);
   }
-  // 中线部署区提示
-  if (S.selected) {
-    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  if (S.selected){
+    ctx.fillStyle='rgba(255,255,255,0.10)';
     const yTop = S.mySide===0 ? RIVER_Y+0.5 : 0;
-    ctx.fillRect(0, py(yTop + (S.mySide===0?ARENA_H-RIVER_Y-0.5:RIVER_Y)), view.w, s*(ARENA_H/2-0.5));
+    ctx.fillRect(0, py(yTop+(S.mySide===0?ARENA_H-RIVER_Y-0.5:RIVER_Y)), view.w, s*(ARENA_H/2-0.5));
   }
 }
-
-function drawTower(t) {
-  const s = view.scale;
-  const x = px(t.x), y = py(t.y);
-  const size = t.kind==='king' ? s*1.7 : s*1.4;
-  if (!t.alive) {
-    ctx.globalAlpha = .55;
-    ctx.font = `${size}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText('🏚️', x, y);
-    ctx.globalAlpha = 1;
-    return;
-  }
-  // 底座
-  ctx.fillStyle = t.side===S.mySide ? 'rgba(41,121,255,.35)' : 'rgba(229,57,53,.35)';
-  ctx.beginPath(); ctx.arc(x, y, size*0.72, 0, Math.PI*2); ctx.fill();
-  ctx.font = `${size}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText(TOWER_EMOJI[t.kind], x, y);
-  // 血条
-  drawHpBar(x, y - size*0.75, size*1.3, t.hp/t.maxHp, t.side===S.mySide);
+function drawTower(t){
+  const s=view.scale, x=px(t.x), y=py(t.y);
+  const size = t.kind==='king'?s*1.7:s*1.4;
+  if (!t.alive){ ctx.globalAlpha=.55; ctx.font=`${size}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('🏚️',x,y); ctx.globalAlpha=1; return; }
+  ctx.fillStyle = t.side===S.mySide?'rgba(41,121,255,.35)':'rgba(229,57,53,.35)';
+  ctx.beginPath(); ctx.arc(x,y,size*0.72,0,Math.PI*2); ctx.fill();
+  ctx.font=`${size}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(TOWER_EMOJI[t.kind],x,y);
+  drawHpBar(x,y-size*0.75,size*1.3,t.hp/t.maxHp,t.side===S.mySide);
 }
-
-function drawHpBar(cx, cy, w, frac, mine) {
-  const h = Math.max(3, view.scale*0.18);
-  ctx.fillStyle = 'rgba(0,0,0,.6)';
-  ctx.fillRect(cx-w/2, cy-h/2, w, h);
-  ctx.fillStyle = frac>0.5 ? '#66bb6a' : frac>0.25 ? '#ffa726' : '#ef5350';
-  if (mine) ctx.fillStyle = '#4fc3f7';
-  ctx.fillRect(cx-w/2, cy-h/2, w*Math.max(0,frac), h);
+function drawHpBar(cx,cy,w,frac,mine){
+  const h=Math.max(3,view.scale*0.18);
+  ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(cx-w/2,cy-h/2,w,h);
+  ctx.fillStyle = frac>0.5?'#66bb6a':frac>0.25?'#ffa726':'#ef5350';
+  if (mine) ctx.fillStyle='#4fc3f7';
+  ctx.fillRect(cx-w/2,cy-h/2,w*Math.max(0,frac),h);
 }
-
-function lerpMap(map, id, tx, ty, k) {
-  let p = map.get(id);
-  if (!p) { p = {x:tx, y:ty}; map.set(id, p); }
-  p.x += (tx-p.x)*k; p.y += (ty-p.y)*k;
-  return p;
-}
-
-function drawUnits() {
-  const s = view.scale;
-  if (!S.snap) return;
-  const seen = new Set();
-  for (const u of S.snap.units) {
+function lerpMap(map,id,tx,ty,k){ let p=map.get(id); if(!p){p={x:tx,y:ty};map.set(id,p);} p.x+=(tx-p.x)*k; p.y+=(ty-p.y)*k; return p; }
+function drawUnits(){
+  const s=view.scale; if(!S.snap)return;
+  const seen=new Set();
+  for (const u of S.snap.units){
     seen.add(u.id);
-    const p = lerpMap(S.renderUnits, u.id, u.x, u.y, 0.35);
-    const x = px(p.x), y = py(p.y);
-    const def = CARDS[u.type];
-    const r = unitR();
-    // 出生动画
-    const scale = u.spawn ? 0.5 : 1;
-    ctx.fillStyle = u.side===S.mySide ? 'rgba(41,121,255,.4)' : 'rgba(229,57,53,.4)';
-    ctx.beginPath(); ctx.arc(x, y, r*scale, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = u.side===S.mySide ? '#2979ff' : '#e53935';
-    ctx.lineWidth = Math.max(1.5, s*0.09);
-    ctx.stroke();
-    ctx.font = `${r*1.35*scale}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(def.emoji, x, y);
-    if (!u.spawn) drawHpBar(x, y - r*1.15, r*1.8, u.hp/u.maxHp, u.side===S.mySide);
+    const p=lerpMap(S.renderUnits,u.id,u.x,u.y,0.35);
+    const x=px(p.x), y=py(p.y);
+    const def=CARDS[u.type], r=unitR(), scale=u.spawn?0.5:1;
+    ctx.fillStyle = u.side===S.mySide?'rgba(41,121,255,.4)':'rgba(229,57,53,.4)';
+    ctx.beginPath(); ctx.arc(x,y,r*scale,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = u.side===S.mySide?'#2979ff':'#e53935';
+    ctx.lineWidth=Math.max(1.5,s*0.09); ctx.stroke();
+    ctx.font=`${r*1.35*scale}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(def.emoji,x,y);
+    if (!u.spawn) drawHpBar(x,y-r*1.15,r*1.8,u.hp/u.maxHp,u.side===S.mySide);
   }
-  for (const id of [...S.renderUnits.keys()]) if (!seen.has(id)) S.renderUnits.delete(id);
+  for (const id of [...S.renderUnits.keys()]) if(!seen.has(id)) S.renderUnits.delete(id);
 }
-
-function drawProjectiles() {
-  const s = view.scale;
-  if (!S.snap) return;
-  const seen = new Set();
-  for (const p of S.snap.projectiles) {
+function drawProjectiles(){
+  const s=view.scale; if(!S.snap)return;
+  const seen=new Set();
+  for (const p of S.snap.projectiles){
     seen.add(p.id);
-    const lp = lerpMap(S.renderProj, p.id, p.x, p.y, 0.55);
-    const x = px(lp.x), y = py(lp.y);
-    ctx.fillStyle = p.side===S.mySide ? '#82b1ff' : '#ff8a80';
-    ctx.beginPath(); ctx.arc(x, y, Math.max(2, s*0.16), 0, Math.PI*2); ctx.fill();
+    const lp=lerpMap(S.renderProj,p.id,p.x,p.y,0.55);
+    ctx.fillStyle = p.side===S.mySide?'#82b1ff':'#ff8a80';
+    ctx.beginPath(); ctx.arc(px(lp.x),py(lp.y),Math.max(2,s*0.16),0,Math.PI*2); ctx.fill();
   }
-  for (const id of [...S.renderProj.keys()]) if (!seen.has(id)) S.renderProj.delete(id);
+  for (const id of [...S.renderProj.keys()]) if(!seen.has(id)) S.renderProj.delete(id);
 }
-
-function drawEffects() {
-  const s = view.scale;
-  if (!S.snap) return;
-  for (const e of S.snap.effects) {
-    const x = px(e.x), y = py(e.y);
-    if (e.kind==='fireball') {
-      const prog = 1 - Math.max(0, e.ttl)/0.6;
-      ctx.fillStyle = `rgba(255,${Math.round(120-80*prog)},34,${0.75*(1-prog*0.6)})`;
-      ctx.beginPath(); ctx.arc(x, y, (e.radius||2.5)*s*(0.4+prog*0.6), 0, Math.PI*2); ctx.fill();
-    } else if (e.kind==='boom') {
-      const prog = 1 - Math.max(0,e.ttl)/0.8;
-      ctx.strokeStyle = `rgba(255,215,0,${1-prog})`;
-      ctx.lineWidth = s*0.2;
-      ctx.beginPath(); ctx.arc(x, y, (0.5+prog*2)*s, 0, Math.PI*2); ctx.stroke();
+function drawEffects(){
+  const s=view.scale; if(!S.snap)return;
+  for (const e of S.snap.effects){
+    const x=px(e.x), y=py(e.y);
+    if (e.kind==='fireball'){
+      const prog=1-Math.max(0,e.ttl)/0.6;
+      ctx.fillStyle=`rgba(255,${Math.round(120-80*prog)},34,${0.75*(1-prog*0.6)})`;
+      ctx.beginPath(); ctx.arc(x,y,(e.radius||2.5)*s*(0.4+prog*0.6),0,Math.PI*2); ctx.fill();
+    } else if (e.kind==='boom'){
+      const prog=1-Math.max(0,e.ttl)/0.8;
+      ctx.strokeStyle=`rgba(255,215,0,${1-prog})`; ctx.lineWidth=s*0.2;
+      ctx.beginPath(); ctx.arc(x,y,(0.5+prog*2)*s,0,Math.PI*2); ctx.stroke();
     } else {
-      ctx.fillStyle = `rgba(255,255,255,${Math.max(0,e.ttl)/0.2*0.8})`;
-      ctx.beginPath(); ctx.arc(x, y, s*0.35, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle=`rgba(255,255,255,${Math.max(0,e.ttl)/0.2*0.8})`;
+      ctx.beginPath(); ctx.arc(x,y,s*0.35,0,Math.PI*2); ctx.fill();
     }
   }
 }
-
-function drawTopInfo() {
+function drawTopInfo(){
   if (!S.snap) return;
-  const me = S.snap.players[S.mySide], foe = S.snap.players[1-S.mySide];
+  const me=S.snap.players[S.mySide], foe=S.snap.players[1-S.mySide];
   $('meInfo').textContent = `${me?me.name:'我'} 👑${me?me.crowns:0}`;
   $('foeInfo').textContent = `👑${foe?foe.crowns:0} ${foe?foe.name:'对手'}`;
-  const t = S.snap.time;
-  const tm = $('timer');
+  const t=S.snap.time, tm=$('timer');
   tm.textContent = `${Math.floor(t/60)}:${String(t%60).padStart(2,'0')}`;
   tm.classList.toggle('overtime', !!S.snap.overtime);
-  if (me) {
-    if (Math.floor(S.elixirLocal) !== me.elixir && me.elixir > S.elixirLocal) {} // 平滑由 update 处理
-  }
   updateHandUI();
 }
 
 // ================= 输入：点击部署 =================
-canvas.addEventListener('pointerdown', (ev) => {
+canvas.addEventListener('pointerdown', (ev)=>{
   if (S.phase!=='battle' || !S.selected || !S.snap) return;
   const rect = canvas.getBoundingClientRect();
-  const cx = (ev.clientX - rect.left) / rect.width * ARENA_W;
-  const cy = (ev.clientY - rect.top) / rect.height * ARENA_H;
-  // 视角逆变换
-  const lx = S.mySide===0 ? cx : ARENA_W - cx;
-  const ly = S.mySide===0 ? cy : ARENA_H - cy;
-  send({ t:'deploy', card:S.selected, x:Math.round(lx*10)/10, y:Math.round(ly*10)/10 });
+  const cx = (ev.clientX-rect.left)/rect.width*ARENA_W;
+  const cy = (ev.clientY-rect.top)/rect.height*ARENA_H;
+  const lx = S.mySide===0?cx:ARENA_W-cx, ly = S.mySide===0?cy:ARENA_H-cy;
+  const data = { card:S.selected, x:Math.round(lx*10)/10, y:Math.round(ly*10)/10 };
+  if (S.role==='host'){
+    const err = handleDeploy(0, data);
+    if (err){ toast(err); sfx.error(); return; }
+  } else {
+    pub('/g/deploy', data);
+  }
   sfx.deploy();
-  S.selected = null;
+  S.selected=null;
   updateHandUI();
 });
 
 // ================= 结算 =================
-function showResult(m) {
-  S.phase = 'result';
-  const win = m.winner === S.mySide, draw = m.winner < 0;
-  const title = $('resultTitle');
-  title.textContent = draw ? '平局' : win ? '🏆 胜利!' : '💀 失败';
-  title.className = draw ? 'draw' : win ? 'win' : 'lose';
-  const myC = m.crowns[S.mySide]||0, foeC = m.crowns[1-S.mySide]||0;
+function showResult(m){
+  S.phase='result';
+  const win = m.winner===S.mySide, draw = m.winner<0;
+  const title=$('resultTitle');
+  title.textContent = draw?'平局':win?'🏆 胜利!':'💀 失败';
+  title.className = draw?'draw':win?'win':'lose';
+  const myC=m.crowns[S.mySide]||0, foeC=m.crowns[1-S.mySide]||0;
   $('resultCrowns').textContent = `👑 ${myC} - ${foeC}`;
-  $('resultReason').textContent = m.reason || '';
+  $('resultReason').textContent = m.reason||'';
   showScreen('resultScreen');
-  if (draw) beep(440,.4,'sine',.08); else win ? sfx.win() : sfx.lose();
+  if (draw) beep(440,.4,'sine',.08); else win?sfx.win():sfx.lose();
 }
 
 // ================= 主循环 =================
-function frame() {
-  if (S.phase==='battle' && S.snap) {
+function frame(){
+  if (S.phase==='battle' && S.snap){
     drawArena();
     for (const t of S.snap.towers) drawTower(t);
-    drawUnits();
-    drawProjectiles();
-    drawEffects();
-    drawTopInfo();
-    updateElixirUI();
+    drawUnits(); drawProjectiles(); drawEffects(); drawTopInfo(); updateElixirUI();
   }
   requestAnimationFrame(frame);
 }
