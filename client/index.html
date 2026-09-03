@@ -95,7 +95,7 @@
 
   <!-- 主菜单 -->
   <div class="screen active" id="menuScreen">
-    <div class="ver">v1.5</div>
+    <div class="ver">v1.6</div>
     <div class="floatBg" id="floatBg"></div>
     <div class="logoCrown">👑</div>
     <h1 class="logo">皇室对决</h1>
@@ -198,6 +198,12 @@ const CARDS = {
   pekka:     { name:'皮卡超人', cost:7, emoji:'⚔️', kind:'unit' },
   apekka:    { name:'觉醒皮卡', cost:7, emoji:'⚡', kind:'unit' },
   awizard:   { name:'觉醒法师', cost:5, emoji:'🌀', kind:'unit' },
+  ecannon:   { name:'电磁炮车', cost:6, emoji:'🧲', kind:'unit' },
+  askeletons:{ name:'觉醒骷髅兵', cost:2, emoji:'🦴', kind:'unit' },
+  tombstone: { name:'骷髅墓碑', cost:3, emoji:'🪦', kind:'unit' },
+  skeleton:  { name:'小骷髅', emoji:'💀', kind:'unit', hidden:true },
+  bskeleton: { name:'大骷髅', emoji:'☠️', kind:'unit', hidden:true },
+  bomb:      { name:'炸弹',   emoji:'💣', kind:'unit', hidden:true },
 };
 // 引擎数值定义
 const CARD_DEFS = {
@@ -215,10 +221,20 @@ const CARD_DEFS = {
   pekka:     { cost:7, kind:'unit', count:1, hp:3100, dmg:680, speed:0.7, range:0.9, hitSpeed:1.8, sight:5.5, radius:0.55 },
   // 觉醒皮卡：用过1次后下一只觉醒（血量翻倍+击杀回血10%）
   apekka:    { cost:7, kind:'unit', count:1, hp:3100, dmg:680, speed:0.7, range:0.9, hitSpeed:1.8, sight:5.5, radius:0.55, awakenAfter:1 },
-  // 觉醒法师：用过2次后觉醒（溅射范围+10%、减速5%、聚怪旋风）
+  // 觉醒法师：用过2次后觉醒（溅射范围大幅扩大、减速5%、攻击后形成漩涡）
   awizard:   { cost:5, kind:'unit', count:1, hp:600,  dmg:230, speed:1.0, range:5.5, hitSpeed:1.5, sight:6.0, radius:0.4, splash:1.2, awakenAfter:2 },
+  // 电磁炮车：蓄力2秒（三个光环），蓄满开炮；用过1次后下一辆觉醒（连发三炮、每炮伤害-50%）
+  ecannon:   { cost:6, kind:'unit', count:1, hp:1400, dmg:1200, speed:0.6, range:6.5, hitSpeed:0.3, sight:7.0, radius:0.55, chargeTime:2, awakenAfter:1 },
+  // 觉醒骷髅兵：用过2次后觉醒（每攻击一次多召唤一只小骷髅）
+  askeletons:{ cost:2, kind:'unit', count:3, hp:72,  dmg:62,  speed:1.7, range:0.7, hitSpeed:1.0, sight:5.5, radius:0.28, awakenAfter:2 },
+  // 骷髅墓碑：建筑，每2秒召唤两只小骷髅，存在25秒；用过1次后觉醒（立即变大骷髅+两只小骷髅）
+  tombstone: { cost:3, kind:'unit', count:1, hp:800, dmg:0,   speed:0,   range:0,   hitSpeed:2.0, sight:0,   radius:0.5, building:true, life:25, awakenAfter:1 },
+  // 内部单位（不可选入卡组）
+  skeleton:  { cost:0, kind:'unit', count:1, hp:72,   dmg:62,  speed:1.7, range:0.7, hitSpeed:1.0, sight:5.5, radius:0.28, hidden:true },
+  bskeleton: { cost:0, kind:'unit', count:1, hp:2200, dmg:220, speed:0.9, range:0.9, hitSpeed:1.3, sight:5.5, radius:0.6,  hidden:true },
+  bomb:      { cost:0, kind:'unit', count:1, hp:9999, dmg:0,   speed:0,   range:0,   hitSpeed:0,   sight:0,   radius:0.4, hidden:true, building:true, bomb:true, life:2, boomDmg:900, boomRadius:2.5 },
 };
-const DECK = Object.keys(CARD_DEFS);
+const DECK = Object.keys(CARD_DEFS).filter(k=>!CARD_DEFS[k].hidden);
 const TOWER_DEFS = {
   princess: { hp:2500, dmg:120, range:7.5, hitSpeed:0.8 },
   king:     { hp:4000, dmg:120, range:7.0, hitSpeed:1.0 },
@@ -299,6 +315,11 @@ const CARD_SFX = {
   pekka:    ()=>{ beep(120,.5,'sawtooth',.16); setTimeout(()=>beep(90,.5,'sawtooth',.14),150); },    // 重甲低吼
   apekka:   ()=>{ beep(120,.4,'sawtooth',.15); setTimeout(()=>beep(1568,.25,'triangle',.12),120); }, // 低吼+闪电
   awizard:  ()=>{ beep(600,.15,'sine',.1); setTimeout(()=>beep(900,.2,'sine',.1),90); setTimeout(()=>beep(1200,.25,'sine',.1),180); }, // 旋风三连音
+  ecannon:  ()=>{ beep(200,.4,'sawtooth',.1); setTimeout(()=>beep(400,.3,'sawtooth',.1),200); setTimeout(()=>beep(800,.25,'sawtooth',.12),400); }, // 蓄力升调
+  askeletons:()=>{ [1300,1100,1400,1200].forEach((f,i)=>setTimeout(()=>beep(f,.04,'triangle',.05), i*40)); },  // 骨头群咔哒
+  tombstone:()=>{ beep(150,.4,'sine',.14); setTimeout(()=>beep(110,.5,'sine',.12),150); },   // 墓碑落地闷响
+  skeleton: ()=>beep(1400,.04,'triangle',.05),
+  bskeleton:()=>{ beep(100,.5,'sawtooth',.16); setTimeout(()=>beep(80,.4,'sawtooth',.14),120); }, // 大骷髅低吼
 };
 function playCardSfx(card){ const f=CARD_SFX[card]; if (f) f(); else sfx.deploy(); }
 
@@ -374,7 +395,7 @@ function damageUnit(u, dmg, attacker){
   const awiz = attacker && attacker.awakened && attacker.type==='awizard';
   if (awiz) u.slow = 1.2;   // 觉醒法师：命中减速5%
   if (adef && adef.splash){
-    const sp = adef.splash * (awiz ? 1.1 : 1);   // 觉醒法师：攻击范围+10%
+    const sp = adef.splash * (awiz ? 1.6 : 1);   // 觉醒法师：攻击扩建范围再加大
     for (const o of E.units){
       if (o===u || o.side===u.side || o.hp<=0) continue;
       if (dist2(o,u) <= sp*sp){ o.hp -= dmg; if (attacker) o.lastHit = attacker.id; if (awiz) o.slow = 1.2; }
@@ -391,13 +412,22 @@ function spawnUnits(side, card, x, y){
     p.useCount[card] = (p.useCount[card]||0) + 1;
     awakened = p.useCount[card] > def.awakenAfter;
   }
-  for (let i=0;i<def.count;i++){
-    const off = def.count>1 ? 0.55 : 0, ang=(i/def.count)*Math.PI*2;
-    let hp = def.hp, maxHp = def.hp;
-    if (awakened && card==='apekka'){ hp *= 2; maxHp *= 2; }   // 觉醒皮卡：血量翻倍
-    E.units.push({ id:E.nextId++, side, type:card,
-      x:clamp(x+Math.cos(ang)*off,0.5,ARENA_W-0.5), y:clamp(y+Math.sin(ang)*off,0.5,ARENA_H-0.5),
-      hp, maxHp, cd:0, spawnCd:1.0, awakened, slow:0 });
+  // 觉醒墓碑：放置后立即破坏建筑物，变成一只大骷髅+两只小骷髅
+  if (card==='tombstone' && awakened){
+    const mk=(type,dx,dy)=>E.units.push({ id:E.nextId++, side, type,
+      x:clamp(x+dx,0.5,ARENA_W-0.5), y:clamp(y+dy,0.5,ARENA_H-0.5),
+      hp:CARD_DEFS[type].hp, maxHp:CARD_DEFS[type].hp, cd:0, spawnCd:0.6, awakened:false, slow:0 });
+    mk('bskeleton',0,0); mk('skeleton',-0.7,0.5); mk('skeleton',0.7,0.5);
+  } else {
+    for (let i=0;i<def.count;i++){
+      const off = def.count>1 ? 0.55 : 0, ang=(i/def.count)*Math.PI*2;
+      let hp = def.hp, maxHp = def.hp;
+      if (awakened && card==='apekka'){ hp *= 2; maxHp *= 2; }   // 觉醒皮卡：觉醒后血量才翻倍
+      E.units.push({ id:E.nextId++, side, type:card,
+        x:clamp(x+Math.cos(ang)*off,0.5,ARENA_W-0.5), y:clamp(y+Math.sin(ang)*off,0.5,ARENA_H-0.5),
+        hp, maxHp, cd:0, spawnCd:1.0, awakened, slow:0,
+        charge:0, pendingShots:0, life:def.life||0, summonT:def.building?def.hitSpeed:0 });
+    }
   }
   if (awakened){
     E.effects.push({ id:E.nextId++, kind:'awaken', x, y, radius:2.2, ttl:1.0 });
@@ -430,9 +460,33 @@ function simUnits(dt){
     const def = CARD_DEFS[u.type], enemy = enemyOf(u.side);
     u.cd = Math.max(0,u.cd-dt);
     u.slow = Math.max(0,(u.slow||0)-dt);
+    // 建筑类（骷髅墓碑/炸弹）：固定不动，寿命倒计时
+    if (def.building){
+      if (u.life>0){
+        u.life-=dt;
+        if (u.life<=0){
+          if (def.bomb){   // 炸弹2秒后爆炸：只伤敌军，不伤友军
+            E.effects.push({ id:E.nextId++, kind:'bomb', x:u.x, y:u.y, radius:def.boomRadius, ttl:0.7 });
+            for (const o of E.units) if (o.side!==u.side && o.hp>0 && dist2(o,u)<=def.boomRadius*def.boomRadius) o.hp-=def.boomDmg;
+            for (const t of E.towers) if (t.side!==u.side && t.alive && dist2(t,u)<=def.boomRadius*def.boomRadius) damageTower(t, def.boomDmg*0.35, u.side);
+          }
+          u.hp=0; continue;
+        }
+      }
+      if (def.bomb) continue;   // 炸弹只等爆炸
+      u.summonT-=dt;            // 墓碑每2秒召唤两只小骷髅
+      if (u.summonT<=0){
+        u.summonT=def.hitSpeed;
+        for (const dx of [-0.6,0.6]) E.units.push({ id:E.nextId++, side:u.side, type:'skeleton',
+          x:clamp(u.x+dx,0.5,ARENA_W-0.5), y:clamp(u.y+0.7,0.5,ARENA_H-0.5),
+          hp:CARD_DEFS.skeleton.hp, maxHp:CARD_DEFS.skeleton.hp, cd:0, spawnCd:0.5, awakened:false, slow:0 });
+        E.effects.push({ id:E.nextId++, kind:'summon', x:u.x, y:u.y, ttl:0.5 });
+      }
+      continue;
+    }
     let target=null, best=Infinity;
     if (!def.onlyBuildings){
-      for (const o of E.units){ if(o.side!==enemy||o.hp<=0)continue; const d=dist(u,o); if(d<=def.sight&&d<best){best=d;target={kind:'unit',ref:o,d};} }
+      for (const o of E.units){ if(o.side!==enemy||o.hp<=0||CARD_DEFS[o.type].bomb)continue; const d=dist(u,o); if(d<=def.sight&&d<best){best=d;target={kind:'unit',ref:o,d};} }
     }
     for (const t of E.towers){ if(t.side!==enemy||!t.alive)continue; const d=dist(u,t)-0.6; if(d<=def.sight&&d<best){best=d;target={kind:'tower',ref:t,d};} }
     if (!target){
@@ -446,14 +500,42 @@ function simUnits(dt){
     const tRadius = target.kind==='tower' ? 0.9 : (CARD_DEFS[tObj.type]?CARD_DEFS[tObj.type].radius:0.4);
     const reach = def.range + tRadius;
     if (target.d<=reach){
+      // 电磁炮车：蓄力2秒（三个光环逐渐点亮），蓄满开炮；觉醒后连发三炮、每炮伤害-50%
+      if (def.chargeTime){
+        if (u.pendingShots>0){
+          if (u.cd<=0){
+            u.cd=0.35; u.pendingShots--;
+            const dmg=def.dmg*0.5;
+            E.projectiles.push({ id:E.nextId++, side:u.side, x:u.x, y:u.y, tx:tObj.x, ty:tObj.y, targetId:tObj.id, targetKind:target.kind, speed:14, dmg, srcType:u.type, srcId:u.id, big:true });
+            E.effects.push({ id:E.nextId++, kind:'boom', x:u.x, y:u.y, radius:1.0, ttl:0.4 });
+          }
+        } else if (u.charge<def.chargeTime){
+          u.charge+=dt;
+          if (u.charge>=def.chargeTime){
+            if (u.awakened) u.pendingShots=2;   // 觉醒连发三炮：首发+2
+            const dmg=def.dmg*(u.awakened?0.5:1);
+            E.projectiles.push({ id:E.nextId++, side:u.side, x:u.x, y:u.y, tx:tObj.x, ty:tObj.y, targetId:tObj.id, targetKind:target.kind, speed:14, dmg, srcType:u.type, srcId:u.id, big:true });
+            E.effects.push({ id:E.nextId++, kind:'boom', x:u.x, y:u.y, radius:1.2, ttl:0.5 });
+            u.charge=0;
+          }
+        }
+        continue;
+      }
       if (u.cd<=0){
         u.cd = def.hitSpeed;
         if (def.range>=2) E.projectiles.push({ id:E.nextId++, side:u.side, x:u.x, y:u.y, tx:tObj.x, ty:tObj.y, targetId:tObj.id, targetKind:target.kind, speed:10, dmg:def.dmg, srcType:u.type, srcId:u.id });
-        else if (target.kind==='unit'){ damageUnit(tObj, def.dmg, u); E.effects.push({id:E.nextId++,kind:'hit',x:tObj.x,y:tObj.y,ttl:0.2}); }
+        else if (target.kind==='unit'){
+          damageUnit(tObj, def.dmg, u); E.effects.push({id:E.nextId++,kind:'hit',x:tObj.x,y:tObj.y,ttl:0.2});
+          // 觉醒骷髅兵：每攻击一次多召唤一只小骷髅
+          if (u.awakened && u.type==='askeletons') E.units.push({ id:E.nextId++, side:u.side, type:'skeleton',
+            x:clamp(u.x+(Math.random()-0.5),0.5,ARENA_W-0.5), y:clamp(u.y+0.5,0.5,ARENA_H-0.5),
+            hp:CARD_DEFS.skeleton.hp, maxHp:CARD_DEFS.skeleton.hp, cd:0, spawnCd:0.5, awakened:false, slow:0 });
+        }
         else { damageTower(tObj,def.dmg,u.side); E.effects.push({id:E.nextId++,kind:'hit',x:tObj.x,y:tObj.y,ttl:0.2}); }
       }
       continue;
     }
+    if (def.chargeTime) u.charge=Math.max(0,u.charge-dt*2);   // 没目标时蓄力缓慢回落
     let gx=tObj.x, gy=tObj.y;
     const needCross = (u.y<RIVER_Y)!==(gy<RIVER_Y);
     if (needCross){
@@ -472,7 +554,9 @@ function simUnits(dt){
     }
   }
   for (let i=0;i<E.units.length;i++) for (let j=i+1;j<E.units.length;j++){
-    const a=E.units[i], b=E.units[j], d=dist(a,b), min=0.5;
+    const a=E.units[i], b=E.units[j];
+    if (CARD_DEFS[a.type].building || CARD_DEFS[b.type].building) continue;   // 建筑不被推挤
+    const d=dist(a,b), min=0.5;
     if (d<min && d>0.001){ const push=(min-d)/2, dx=(b.x-a.x)/d, dy=(b.y-a.y)/d; a.x-=dx*push; a.y-=dy*push; b.x+=dx*push; b.y+=dy*push; }
   }
   // 觉醒法师：轻微聚集周围敌方单位，聚集时出现旋风图案
@@ -496,7 +580,7 @@ function simTowers(dt){
     t.cd = Math.max(0,t.cd-dt); if (t.cd>0) continue;
     const def=TOWER_DEFS[t.kind], enemy=enemyOf(t.side);
     let target=null,best=Infinity;
-    for (const u of E.units){ if(u.side!==enemy||u.hp<=0||u.spawnCd>0)continue; const d=dist(t,u); if(d<=def.range&&d<best){best=d;target=u;} }
+    for (const u of E.units){ if(u.side!==enemy||u.hp<=0||u.spawnCd>0||CARD_DEFS[u.type].building)continue; const d=dist(t,u); if(d<=def.range&&d<best){best=d;target=u;} }
     if (target){ t.cd=def.hitSpeed; E.projectiles.push({ id:E.nextId++, side:t.side, x:t.x, y:t.y, tx:target.x, ty:target.y, targetId:target.id, targetKind:'unit', speed:12, dmg:def.dmg }); }
   }
 }
@@ -505,7 +589,7 @@ function simProjectiles(dt){
     const target = p.targetKind==='unit' ? E.units.find(u=>u.id===p.targetId&&u.hp>0) : E.towers.find(t=>t.id===p.targetId&&t.alive);
     if (target){ p.tx=target.x; p.ty=target.y; }
     const dx=p.tx-p.x, dy=p.ty-p.y, d=Math.hypot(dx,dy), step=p.speed*dt;
-    if (d<=step+0.15){ p.dead=true; if(target){ if(p.targetKind==='unit')damageUnit(target,p.dmg,E.units.find(s=>s.id===p.srcId)); else damageTower(target,p.dmg,p.side); E.effects.push({id:E.nextId++,kind:'hit',x:p.tx,y:p.ty,ttl:0.2}); } }
+    if (d<=step+0.15){ p.dead=true; if(target){ const src=E.units.find(s=>s.id===p.srcId); if(p.targetKind==='unit')damageUnit(target,p.dmg,src); else damageTower(target,p.dmg,p.side); E.effects.push({id:E.nextId++,kind:'hit',x:p.tx,y:p.ty,ttl:0.2}); if (src&&src.awakened&&src.type==='awizard') E.effects.push({id:E.nextId++,kind:'vortex',x:p.tx,y:p.ty,radius:2.0,ttl:1.0}); } }
     else { p.x+=(dx/d)*step; p.y+=(dy/d)*step; }
   }
   E.projectiles = E.projectiles.filter(p=>!p.dead);
@@ -547,8 +631,13 @@ function engineTick(){
   for (const p of E.players){ if(!p)continue; if(p.elixir<ELIXIR_MAX){ p.elixirFrac += ELIXIR_RATE*(double?2:1)*dt; if(p.elixirFrac>=1){ p.elixir+=Math.floor(p.elixirFrac); p.elixirFrac%=1; p.elixir=Math.min(p.elixir,ELIXIR_MAX); } } }
   simUnits(dt); simTowers(dt); simProjectiles(dt);
   E.effects = E.effects.filter(e=>(e.ttl-=dt)>0);
-  // 死亡处理：觉醒皮卡击杀回血10%
+  // 死亡处理：觉醒皮卡击杀回血10%；大骷髅死后生成炸弹（2秒后爆炸）
   for (const u of E.units){
+    if (u.hp<=0 && u.type==='bskeleton'){
+      E.units.push({ id:E.nextId++, side:u.side, type:'bomb', x:u.x, y:u.y,
+        hp:9999, maxHp:9999, cd:0, spawnCd:0, awakened:false, slow:0, life:2 });
+      E.effects.push({ id:E.nextId++, kind:'summon', x:u.x, y:u.y, ttl:0.5 });
+    }
     if (u.hp>0 || !u.lastHit) continue;
     const killer = E.units.find(k=>k.id===u.lastHit && k.hp>0);
     if (killer && killer.awakened && killer.type==='apekka'){
@@ -564,8 +653,8 @@ function snapshot(){
     time: Math.max(0, Math.ceil((E.overtime?MATCH_TIME+OVERTIME:MATCH_TIME) - E.elapsed)),
     overtime: E.overtime,
     towers: E.towers.map(t=>({ id:t.id, side:t.side, kind:t.kind, x:r1(t.x), y:r1(t.y), hp:Math.ceil(t.hp), maxHp:t.maxHp, alive:t.alive })),
-    units: E.units.map(u=>({ id:u.id, side:u.side, type:u.type, x:r1(u.x), y:r1(u.y), hp:Math.ceil(u.hp), maxHp:u.maxHp, spawn:u.spawnCd>0, awakened:!!u.awakened, slow:u.slow>0 })),
-    projectiles: E.projectiles.map(p=>({ id:p.id, side:p.side, x:r1(p.x), y:r1(p.y) })),
+    units: E.units.map(u=>({ id:u.id, side:u.side, type:u.type, x:r1(u.x), y:r1(u.y), hp:Math.ceil(u.hp), maxHp:u.maxHp, spawn:u.spawnCd>0, awakened:!!u.awakened, slow:u.slow>0, charge:u.charge||0, chargeMax:CARD_DEFS[u.type].chargeTime||0, building:!!CARD_DEFS[u.type].building, bomb:!!CARD_DEFS[u.type].bomb, life:r1(u.life||0) })),
+    projectiles: E.projectiles.map(p=>({ id:p.id, side:p.side, x:r1(p.x), y:r1(p.y), big:!!p.big })),
     effects: E.effects.map(e=>({ id:e.id, kind:e.kind, x:r1(e.x), y:r1(e.y), radius:e.radius, ttl:r1(e.ttl) })),
     players: E.players.map(p=>p?{ name:p.name, elixir:Math.floor(p.elixir), crowns:p.crowns, hand:p.hand, next:p.next[0]||null }:null),
   };
@@ -960,6 +1049,29 @@ function drawUnits(){
     ctx.lineWidth=Math.max(1.5,s*0.09); ctx.stroke();
     ctx.font=`${r*1.35*scale}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillText(def.emoji,x,y);
+    // 电磁炮车：蓄力时周围三个光环，蓄满全亮
+    if (u.chargeMax){
+      const frac=Math.min(1,u.charge/u.chargeMax);
+      for (let k=0;k<3;k++){
+        const lit = frac >= (k+1)/3 - 0.001;
+        const a0=-Math.PI/2 + k*(Math.PI*2/3) + 0.18, a1=-Math.PI/2 + (k+1)*(Math.PI*2/3) - 0.18;
+        ctx.strokeStyle = lit ? 'rgba(255,235,59,.95)' : 'rgba(255,235,59,.22)';
+        ctx.lineWidth = Math.max(2,s*0.14)*(lit?1.2:1);
+        ctx.beginPath(); ctx.arc(x,y,r*1.6,a0,a1); ctx.stroke();
+        if (lit){ ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=Math.max(1,s*0.05); ctx.beginPath(); ctx.arc(x,y,r*1.6,a0,a1); ctx.stroke(); }
+      }
+    }
+    // 建筑：墓碑显示剩余寿命环；炸弹红闪
+    if (u.building){
+      if (u.bomb){
+        const blink = Math.sin(Date.now()/90)>0;
+        ctx.fillStyle = blink?'rgba(255,60,40,.5)':'rgba(255,160,40,.35)';
+        ctx.beginPath(); ctx.arc(x,y,r*1.2,0,Math.PI*2); ctx.fill();
+      } else if (u.life>0){
+        ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=Math.max(1.5,s*0.08);
+        ctx.beginPath(); ctx.arc(x,y,r*1.4,-Math.PI/2,-Math.PI/2+Math.PI*2*(u.life/25)); ctx.stroke();
+      }
+    }
     if (!u.spawn) drawHpBar(x,y-r*1.15,r*1.8,u.hp/u.maxHp,u.side===S.mySide);
   }
   for (const id of [...S.renderUnits.keys()]) if(!seen.has(id)) S.renderUnits.delete(id);
@@ -970,8 +1082,15 @@ function drawProjectiles(){
   for (const p of S.snap.projectiles){
     seen.add(p.id);
     const lp=lerpMap(S.renderProj,p.id,p.x,p.y,0.55);
-    ctx.fillStyle = p.side===S.mySide?'#82b1ff':'#ff8a80';
-    ctx.beginPath(); ctx.arc(px(lp.x),py(lp.y),Math.max(2,s*0.16),0,Math.PI*2); ctx.fill();
+    if (p.big){   // 电磁炮大炮弹：黄色能量球+光晕
+      ctx.fillStyle='rgba(255,235,59,.3)';
+      ctx.beginPath(); ctx.arc(px(lp.x),py(lp.y),Math.max(4,s*0.5),0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#ffee58';
+      ctx.beginPath(); ctx.arc(px(lp.x),py(lp.y),Math.max(3,s*0.3),0,Math.PI*2); ctx.fill();
+    } else {
+      ctx.fillStyle = p.side===S.mySide?'#82b1ff':'#ff8a80';
+      ctx.beginPath(); ctx.arc(px(lp.x),py(lp.y),Math.max(2,s*0.16),0,Math.PI*2); ctx.fill();
+    }
   }
   for (const id of [...S.renderProj.keys()]) if(!seen.has(id)) S.renderProj.delete(id);
 }
@@ -1007,6 +1126,18 @@ function drawEffects(){
       ctx.beginPath(); ctx.arc(x,y,(0.5+prog*(e.radius||2.2))*s,0,Math.PI*2); ctx.stroke();
       ctx.fillStyle=`rgba(255,235,130,${0.5*(1-prog)})`;
       ctx.beginPath(); ctx.arc(x,y,(0.5+prog*1.2)*s,0,Math.PI*2); ctx.fill();
+    } else if (e.kind==='summon'){
+      // 召唤特效：紫色上升光柱
+      const life=Math.max(0,e.ttl)/0.5, dy=(1-life)*s*1.2;
+      ctx.strokeStyle=`rgba(206,147,216,${life})`; ctx.lineWidth=Math.max(2,s*0.12);
+      ctx.beginPath(); ctx.moveTo(x-s*0.3,y); ctx.lineTo(x-s*0.3,y-dy); ctx.moveTo(x+s*0.3,y); ctx.lineTo(x+s*0.3,y-dy); ctx.stroke();
+    } else if (e.kind==='bomb'){
+      // 炸弹爆炸：橙红冲击波
+      const prog=1-Math.max(0,e.ttl)/0.7;
+      ctx.fillStyle=`rgba(255,110,40,${0.6*(1-prog)})`;
+      ctx.beginPath(); ctx.arc(x,y,(e.radius||2.5)*s*prog,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle=`rgba(255,220,120,${1-prog})`; ctx.lineWidth=s*0.22;
+      ctx.beginPath(); ctx.arc(x,y,(e.radius||2.5)*s*prog,0,Math.PI*2); ctx.stroke();
     } else if (e.kind==='heal'){
       // 觉醒皮卡击杀回血：绿色十字上浮
       const life=Math.max(0,e.ttl)/0.6, dy=(1-life)*s*0.8;
