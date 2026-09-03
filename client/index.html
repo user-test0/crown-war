@@ -659,6 +659,9 @@ function buildHand(){
 function updateHandUI(){
   if (!S.snap) return;
   const me = S.snap.players[S.mySide]; if (!me) return;
+  // 手牌轮换（出牌后新牌进手）时重建手牌 UI，否则用过的牌在界面上"死掉"、新牌不显示
+  const cur = [...document.querySelectorAll('#hand .card')].map(el=>el.dataset.card).join();
+  if (cur !== me.hand.join()) { buildHand(); return; }
   document.querySelectorAll('.card').forEach(el => {
     const def = CARDS[el.dataset.card];
     el.classList.toggle('selected', S.selected===el.dataset.card);
