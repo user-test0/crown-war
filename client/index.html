@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>皇室对决 Crown War</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
+  html,body { width:100%; height:100%; overflow:hidden; background:#1a1c2c; font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif; color:#fff; touch-action:manipulation; }
+  #app { width:100%; height:100%; display:flex; flex-direction:column; }
+  .screen { position:absolute; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; background:radial-gradient(ellipse at 50% 30%, #2b3a67 0%, #1a1c2c 70%); padding:20px; z-index:10; }
+  .screen.active { display:flex; }
+  h1.logo { font-size:min(11vw,52px); font-weight:900; background:linear-gradient(180deg,#ffd700,#ff8c00); -webkit-background-clip:text; background-clip:text; color:transparent; text-shadow:0 3px 12px rgba(255,160,0,.35); margin-bottom:6px; letter-spacing:2px; }
+  .sub { color:#8fa3d9; font-size:13px; margin-bottom:26px; }
+  .panel { width:min(92vw,380px); background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:16px; padding:18px; backdrop-filter:blur(6px); }
+  .row { display:flex; gap:8px; margin-bottom:10px; }
+  input[type=text] { flex:1; min-width:0; background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.18); color:#fff; border-radius:10px; padding:11px 12px; font-size:15px; outline:none; }
+  input[type=text]:focus { border-color:#ffd700; }
+  input::placeholder { color:#667; }
+  .btn { display:block; width:100%; border:none; border-radius:12px; padding:13px; font-size:16px; font-weight:700; color:#fff; cursor:pointer; margin-top:10px; transition:transform .08s, filter .15s; }
+  .btn:active { transform:scale(.97); filter:brightness(1.15); }
+  .btn.gold { background:linear-gradient(180deg,#ffca28,#ff8f00); color:#4a2c00; box-shadow:0 4px 14px rgba(255,160,0,.35); }
+  .btn.blue { background:linear-gradient(180deg,#42a5f5,#1565c0); box-shadow:0 4px 14px rgba(30,120,255,.3); }
+  .btn.green { background:linear-gradient(180deg,#66bb6a,#2e7d32); box-shadow:0 4px 14px rgba(60,180,80,.3); }
+  .btn.gray { background:rgba(255,255,255,.12); }
+  .btn.small { padding:10px; font-size:14px; margin-top:0; width:auto; }
+  .label { font-size:12px; color:#8fa3d9; margin:8px 0 4px; }
+  .roomcode { font-size:min(18vw,84px); font-weight:900; letter-spacing:10px; color:#ffd700; text-shadow:0 0 24px rgba(255,200,0,.5); margin:14px 0; }
+  .hint { color:#8fa3d9; font-size:13px; text-align:center; line-height:1.7; }
+  .spinner { width:34px; height:34px; border:3px solid rgba(255,255,255,.15); border-top-color:#ffd700; border-radius:50%; animation:spin 0.9s linear infinite; margin:16px auto; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* ---------- 对战界面 ---------- */
+  #battleScreen { justify-content:flex-start; padding:0; background:#12141f; }
+  #topBar { width:100%; display:flex; align-items:center; justify-content:space-between; padding:calc(env(safe-area-inset-top, 0px) + 6px) 12px 6px; background:linear-gradient(180deg,rgba(0,0,0,.55),transparent); z-index:5; }
+  .crowns { font-size:15px; font-weight:800; min-width:70px; }
+  .crowns.me { color:#4fc3f7; text-align:left; }
+  .crowns.foe { color:#ef5350; text-align:right; }
+  #timerBox { text-align:center; }
+  #timer { font-size:20px; font-weight:900; color:#fff; }
+  #timer.overtime { color:#ff5252; animation:pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity:.5; } }
+  #connDot { font-size:10px; color:#9ccc65; }
+  #arenaWrap { flex:1; width:100%; display:flex; align-items:center; justify-content:center; min-height:0; position:relative; }
+  #arena { display:block; border-radius:6px; }
+  #bottomPanel { width:100%; padding:6px 8px calc(env(safe-area-inset-bottom, 0px) + 8px); background:linear-gradient(0deg,rgba(0,0,0,.6),transparent); }
+  #elixirWrap { display:flex; align-items:center; gap:6px; margin-bottom:6px; padding:0 4px; }
+  #elixirNum { font-size:18px; font-weight:900; color:#e040fb; min-width:24px; text-align:center; text-shadow:0 0 8px rgba(224,64,251,.6); }
+  #elixirBar { flex:1; height:14px; background:rgba(0,0,0,.5); border-radius:7px; overflow:hidden; border:1px solid rgba(224,64,251,.35); display:flex; }
+  .eseg { flex:1; border-right:1px solid rgba(0,0,0,.4); position:relative; }
+  .eseg:last-child { border-right:none; }
+  .eseg .fill { position:absolute; inset:0; background:linear-gradient(180deg,#ea80fc,#aa00ff); transform-origin:left; transform:scaleX(0); }
+  #hand { display:flex; gap:6px; justify-content:center; }
+  .card { flex:1; max-width:86px; aspect-ratio:3/4; border-radius:10px; position:relative; cursor:pointer; border:2px solid rgba(255,255,255,.25); background:linear-gradient(180deg,#37474f,#263238); display:flex; flex-direction:column; align-items:center; justify-content:center; transition:transform .1s, box-shadow .15s; overflow:hidden; }
+  .card .emoji { font-size:min(8vw,34px); line-height:1; filter:drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
+  .card .cname { font-size:10px; color:#cfd8dc; margin-top:3px; }
+  .card .cost { position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:radial-gradient(circle at 35% 30%,#ea80fc,#7b1fa2); color:#fff; font-size:12px; font-weight:900; display:flex; align-items:center; justify-content:center; box-shadow:0 1px 4px rgba(0,0,0,.6); }
+  .card.selected { transform:translateY(-8px); border-color:#ffd700; box-shadow:0 0 16px rgba(255,215,0,.7); }
+  .card.disabled { filter:grayscale(.9) brightness(.55); }
+  #nextCard { width:44px; aspect-ratio:3/4; border-radius:8px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15); display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:9px; color:#8fa3d9; flex:none; }
+  #nextCard .emoji { font-size:18px; }
+  #toast { position:absolute; top:18%; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.75); color:#ffd700; padding:8px 18px; border-radius:20px; font-size:14px; font-weight:700; opacity:0; transition:opacity .25s; pointer-events:none; z-index:20; white-space:nowrap; }
+  #banner { position:absolute; top:38%; left:0; right:0; text-align:center; font-size:min(10vw,44px); font-weight:900; color:#ffd700; text-shadow:0 0 24px rgba(255,180,0,.8), 0 3px 6px rgba(0,0,0,.6); opacity:0; pointer-events:none; z-index:20; transition:opacity .3s; }
+  #resultScreen .panel { text-align:center; }
+  #resultTitle { font-size:42px; font-weight:900; margin-bottom:8px; }
+  #resultTitle.win { color:#ffd700; } #resultTitle.lose { color:#90a4ae; } #resultTitle.draw { color:#4fc3f7; }
+  #resultCrowns { font-size:26px; margin-bottom:10px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 主菜单 -->
+  <div class="screen active" id="menuScreen">
+    <h1 class="logo">皇室对决</h1>
+    <div class="sub">CROWN WAR · 联机对战</div>
+    <div class="panel">
+      <div class="label">你的昵称</div>
+      <div class="row"><input type="text" id="nameInput" maxlength="10" placeholder="输入昵称"></div>
+      <div class="label">服务器地址（和朋友联机需填同一个）</div>
+      <div class="row"><input type="text" id="serverInput" placeholder="ws://IP:3000"></div>
+      <button class="btn gold" id="btnQuick">⚔️ 快速匹配</button>
+      <button class="btn blue" id="btnCreate">🏠 创建房间（好友约战）</button>
+      <div class="row" style="margin-top:10px">
+        <input type="text" id="joinCode" maxlength="4" placeholder="房间号" inputmode="numeric" style="text-align:center;letter-spacing:4px">
+        <button class="btn green small" id="btnJoin" style="flex:none;padding:10px 18px">加入</button>
+      </div>
+      <button class="btn gray" id="btnBot">🤖 人机练习</button>
+    </div>
+    <div class="hint" style="margin-top:14px">部署军队，摧毁对方的国王塔！<br>3 分钟决胜负，加时赛首冠定输赢</div>
+  </div>
+
+  <!-- 等待房间 -->
+  <div class="screen" id="waitScreen">
+    <div class="panel" style="text-align:center">
+      <div class="hint" id="waitTitle">等待对手加入…</div>
+      <div class="spinner" id="waitSpinner"></div>
+      <div class="hint">房间号</div>
+      <div class="roomcode" id="roomCodeShow">----</div>
+      <div class="hint">把房间号发给朋友，让 TA 在「加入房间」里输入</div>
+      <button class="btn gray" id="btnCancelWait">取消</button>
+    </div>
+  </div>
+
+  <!-- 对战 -->
+  <div class="screen" id="battleScreen">
+    <div id="topBar">
+      <div class="crowns foe" id="foeInfo">👑0 对手</div>
+      <div id="timerBox"><div id="timer">3:00</div><div id="connDot">● 已连接</div></div>
+      <div class="crowns me" id="meInfo">我 👑0</div>
+    </div>
+    <div id="arenaWrap"><canvas id="arena"></canvas></div>
+    <div id="bottomPanel">
+      <div id="elixirWrap">
+        <div id="elixirNum">6</div>
+        <div id="elixirBar"></div>
+      </div>
+      <div id="hand">
+        <div id="nextCard"><div class="emoji">❔</div>下一张</div>
+      </div>
+    </div>
+    <div id="toast"></div>
+    <div id="banner"></div>
+  </div>
+
+  <!-- 结算 -->
+  <div class="screen" id="resultScreen">
+    <div class="panel">
+      <div id="resultTitle">胜利!</div>
+      <div id="resultCrowns">👑 0 - 0</div>
+      <div class="hint" id="resultReason"></div>
+      <button class="btn gold" id="btnAgain">再来一局（快速匹配）</button>
+      <button class="btn gray" id="btnBackMenu">返回主菜单</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+// ================= 常量与卡牌 =================
+const ARENA_W = 18, ARENA_H = 32, RIVER_Y = 16, BRIDGES = [3.5, 14.5];
+const CARDS = {
+  knight:    { name:'骑士',     cost:3, emoji:'🗡️', kind:'unit' },
+  archers:   { name:'弓箭手',   cost:3, emoji:'🏹', kind:'unit' },
+  giant:     { name:'巨人',     cost:5, emoji:'🗿', kind:'unit' },
+  minipekka: { name:'迷你皮卡', cost:4, emoji:'🤖', kind:'unit' },
+  goblins:   { name:'哥布林',   cost:2, emoji:'👺', kind:'unit' },
+  musketeer: { name:'火枪手',   cost:4, emoji:'🎯', kind:'unit' },
+  skeletons: { name:'骷髅兵',   cost:1, emoji:'💀', kind:'unit' },
+  fireball:  { name:'火球术',   cost:4, emoji:'🔥', kind:'spell' },
+};
+const TOWER_EMOJI = { king:'👑', princess:'🏰' };
+
+// ================= 全局状态 =================
+const S = {
+  ws:null, connected:false,
+  mySide:0, room:null, token:null,
+  phase:'menu',            // menu|wait|battle|result
+  snap:null, prevSnap:null,
+  selected:null,
+  elixirLocal:6,
+  renderUnits:new Map(),   // id -> {x,y}
+  renderProj:new Map(),
+  name:'', server:'',
+  reconnectTimer:null, closedByUser:false,
+};
+
+const $ = id => document.getElementById(id);
+const store = {
+  get:(k,d)=>{ try { return localStorage.getItem(k) ?? d; } catch(_){ return d; } },
+  set:(k,v)=>{ try { localStorage.setItem(k,v); } catch(_){} },
+};
+
+// ================= 音效（WebAudio 简易） =================
+let audioCtx = null;
+function beep(freq, dur, type, vol) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = type||'square'; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol||0.08, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + dur);
+  } catch(_) {}
+}
+const sfx = {
+  deploy:()=>beep(520,.12,'triangle',.1),
+  enemyDeploy:()=>beep(300,.1,'triangle',.05),
+  tower:()=>{ beep(160,.4,'sawtooth',.12); setTimeout(()=>beep(120,.5,'sawtooth',.12),120); },
+  win:()=>{ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,.22,'triangle',.1), i*150)); },
+  lose:()=>{ [400,350,300,240].forEach((f,i)=>setTimeout(()=>beep(f,.25,'sine',.1), i*160)); },
+  error:()=>beep(180,.15,'square',.08),
+};
+
+// ================= 界面切换 =================
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  $(id).classList.add('active');
+}
+function toast(msg, ms) {
+  const t = $('toast'); t.textContent = msg; t.style.opacity = 1;
+  clearTimeout(t._h); t._h = setTimeout(()=>t.style.opacity=0, ms||1600);
+}
+function banner(msg, ms) {
+  const b = $('banner'); b.textContent = msg; b.style.opacity = 1;
+  clearTimeout(b._h); b._h = setTimeout(()=>b.style.opacity=0, ms||1800);
+}
+
+// ================= 网络 =================
+function wsConnect() {
+  if (S.ws && (S.ws.readyState===WebSocket.OPEN||S.ws.readyState===WebSocket.CONNECTING)) return;
+  let url = S.server.trim();
+  if (!url) { toast('请先填写服务器地址'); sfx.error(); return; }
+  if (!/^wss?:\/\//.test(url)) url = 'ws://' + url;
+  setConn(false);
+  try { S.ws = new WebSocket(url); } catch(e) { toast('服务器地址无效'); return; }
+  S.ws.onopen = () => { setConn(true); };
+  S.ws.onmessage = (ev) => { let m; try{ m=JSON.parse(ev.data);}catch(_){return;} handleMsg(m); };
+  S.ws.onclose = () => {
+    setConn(false);
+    if (S.closedByUser) return;
+    if (S.phase==='battle' && S.room && S.token) scheduleReconnect();
+    else if (S.phase==='wait') { toast('连接断开，请重试'); showScreen('menuScreen'); S.phase='menu'; }
+  };
+  S.ws.onerror = () => {};
+}
+function setConn(ok) {
+  S.connected = ok;
+  const d = $('connDot');
+  d.textContent = ok ? '● 已连接' : '○ 连接中…';
+  d.style.color = ok ? '#9ccc65' : '#ffb74d';
+}
+function scheduleReconnect() {
+  if (S.reconnectTimer) return;
+  banner('网络波动，重连中…', 2500);
+  S.reconnectTimer = setTimeout(() => {
+    S.reconnectTimer = null;
+    wsConnect();
+    const tryJoin = () => { if (S.ws && S.ws.readyState===WebSocket.OPEN) send({t:'rejoin', room:S.room, token:S.token}); else setTimeout(tryJoin, 500); };
+    tryJoin();
+  }, 800);
+}
+function send(m) { if (S.ws && S.ws.readyState===WebSocket.OPEN) S.ws.send(JSON.stringify(m)); }
+
+function handleMsg(m) {
+  switch (m.t) {
+    case 'room':
+      S.room = m.code; S.token = m.token; S.mySide = m.side;
+      break;
+    case 'queued':
+      S.room = m.room;
+      $('waitTitle').textContent = '正在匹配对手…';
+      $('roomCodeShow').textContent = '';
+      break;
+    case 'start':
+      S.mySide = m.side; S.snap = m.snapshot; S.prevSnap = m.snapshot;
+      S.phase = 'battle'; S.selected = null;
+      S.elixirLocal = m.snapshot.players[S.mySide].elixir;
+      S.renderUnits.clear(); S.renderProj.clear();
+      showScreen('battleScreen');
+      banner('⚔️ 对战开始!');
+      buildHand(); resize();
+      break;
+    case 'state':
+      S.prevSnap = S.snap; S.snap = m.snapshot;
+      break;
+    case 'deployed':
+      if (m.side !== S.mySide) sfx.enemyDeploy();
+      break;
+    case 'towerDown':
+      sfx.tower();
+      banner(m.by === S.mySide ? '🎉 摧毁敌塔!' : '⚠️ 我方塔被摧毁!', 1500);
+      break;
+    case 'overtime':
+      banner('⚡ 加时赛! 双倍圣水', 2200);
+      break;
+    case 'end':
+      showResult(m);
+      break;
+    case 'peer':
+      if (!m.connected) banner('对手掉线，等待重连…', 3000);
+      else if (S.phase==='battle') banner('对手已重连', 1500);
+      break;
+    case 'rejoined':
+      S.mySide = m.side;
+      if (m.state === 'playing') {
+        S.snap = m.snapshot; S.prevSnap = m.snapshot;
+        S.phase='battle'; showScreen('battleScreen'); buildHand(); resize();
+        banner('重连成功!');
+      }
+      break;
+    case 'toast':
+      toast(m.msg); sfx.error();
+      break;
+    case 'error':
+      toast(m.msg); sfx.error();
+      if (S.phase==='wait') { showScreen('menuScreen'); S.phase='menu'; }
+      break;
+    case 'left':
+      S.room = null; S.token = null;
+      break;
+  }
+}
+
+// ================= 菜单交互 =================
+$('nameInput').value = store.get('cw_name','');
+// 服务器地址：
+//  - 网页版（http/https 打开）：默认用页面自身地址（同源部署免填写，最可靠）
+//  - APK（file:// 打开）：无页面地址，用上次保存的值，需手动填写
+(function initServerInput(){
+  const isWeb = location.protocol === 'http:' || location.protocol === 'https:';
+  if (isWeb) {
+    const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+    $('serverInput').value = wsProto + '://' + location.host + '/';
+    $('serverInput').placeholder = '网页版自动使用当前地址';
+  } else {
+    $('serverInput').value = store.get('cw_server','');
+  }
+})();
+
+function prepare() {
+  S.name = $('nameInput').value.trim() || '指挥官';
+  S.server = $('serverInput').value.trim();
+  store.set('cw_name', S.name); store.set('cw_server', S.server);
+  S.closedByUser = false;
+  if (!S.server) { toast('请填写服务器地址'); sfx.error(); return false; }
+  wsConnect();
+  return true;
+}
+function whenConnected(fn) {
+  let tries = 0;
+  const t = setInterval(() => {
+    if (S.ws && S.ws.readyState===WebSocket.OPEN) { clearInterval(t); fn(); }
+    else if (++tries > 20) { clearInterval(t); toast('无法连接服务器，请检查地址'); }
+  }, 250);
+}
+$('btnQuick').onclick = () => { if (!prepare()) return; whenConnected(()=>{ send({t:'quick', name:S.name}); S.phase='wait'; $('waitTitle').textContent='正在匹配对手…'; $('roomCodeShow').textContent=''; $('waitSpinner').style.display='block'; showScreen('waitScreen'); }); };
+$('btnCreate').onclick = () => { if (!prepare()) return; whenConnected(()=>{ send({t:'create', name:S.name}); S.phase='wait'; $('waitTitle').textContent='等待对手加入…'; $('waitSpinner').style.display='block'; showScreen('waitScreen'); }); };
+$('btnJoin').onclick = () => {
+  const code = $('joinCode').value.trim();
+  if (!/^\d{4}$/.test(code)) { toast('请输入 4 位房间号'); sfx.error(); return; }
+  if (!prepare()) return;
+  whenConnected(()=>{ send({t:'join', code, name:S.name}); });
+};
+$('btnBot').onclick = () => { if (!prepare()) return; whenConnected(()=>send({t:'bot', name:S.name})); };
+$('btnCancelWait').onclick = () => { S.closedByUser = true; send({t:'leave'}); if (S.ws) S.ws.close(); S.phase='menu'; showScreen('menuScreen'); };
+$('btnAgain').onclick = () => { S.closedByUser=false; wsConnect(); whenConnected(()=>{ send({t:'quick', name:S.name}); S.phase='wait'; $('waitTitle').textContent='正在匹配对手…'; $('roomCodeShow').textContent=''; showScreen('waitScreen'); }); };
+$('btnBackMenu').onclick = () => { S.closedByUser = true; if (S.ws) S.ws.close(); S.phase='menu'; showScreen('menuScreen'); };
+
+// ================= 手牌 UI =================
+function buildHand() {
+  const hand = $('hand');
+  hand.querySelectorAll('.card').forEach(c=>c.remove());
+  if (!S.snap) return;
+  const me = S.snap.players[S.mySide];
+  me.hand.forEach(card => {
+    const def = CARDS[card];
+    const el = document.createElement('div');
+    el.className = 'card'; el.dataset.card = card;
+    el.innerHTML = `<div class="cost">${def.cost}</div><div class="emoji">${def.emoji}</div><div class="cname">${def.name}</div>`;
+    el.onclick = () => {
+      if (me.elixir < def.cost) { toast('圣水不足'); sfx.error(); return; }
+      if (S.selected === card) { S.selected = null; }
+      else { S.selected = card; beep(700,.06,'sine',.06); }
+      updateHandUI();
+    };
+    hand.appendChild(el);
+  });
+  updateHandUI();
+}
+function updateHandUI() {
+  if (!S.snap) return;
+  const me = S.snap.players[S.mySide];
+  document.querySelectorAll('.card').forEach(el => {
+    const def = CARDS[el.dataset.card];
+    el.classList.toggle('selected', S.selected === el.dataset.card);
+    el.classList.toggle('disabled', me.elixir < def.cost);
+  });
+  const nc = $('nextCard');
+  if (me.next) nc.innerHTML = `<div class="emoji">${CARDS[me.next].emoji}</div>下一张`;
+}
+// 圣水条
+(function buildElixirBar(){
+  const bar = $('elixirBar');
+  for (let i=0;i<10;i++){ const s=document.createElement('div'); s.className='eseg'; s.innerHTML='<div class="fill"></div>'; bar.appendChild(s); }
+})();
+function updateElixirUI() {
+  if (!S.snap) return;
+  const me = S.snap.players[S.mySide];
+  // 本地平滑：朝服务器值逼近
+  const target = me.elixir;
+  if (Math.abs(S.elixirLocal - target) > 1.2) S.elixirLocal = target;
+  else if (S.elixirLocal < target) S.elixirLocal = Math.min(target, S.elixirLocal + 0.02);
+  const v = Math.min(10, S.elixirLocal);
+  $('elixirNum').textContent = me.elixir;
+  document.querySelectorAll('.eseg .fill').forEach((f,i) => {
+    f.style.transform = `scaleX(${Math.max(0, Math.min(1, v - i))})`;
+  });
+}
+
+// ================= 战场渲染 =================
+const canvas = $('arena'), ctx = canvas.getContext('2d');
+let view = { scale:1, ox:0, oy:0, w:0, h:0, dpr:1 };
+
+function resize() {
+  const wrap = $('arenaWrap');
+  const availW = wrap.clientWidth - 8, availH = wrap.clientHeight - 8;
+  if (availW <= 0 || availH <= 0) return;
+  const ratio = ARENA_W / ARENA_H;
+  let w = availW, h = w / ratio;
+  if (h > availH) { h = availH; w = h * ratio; }
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+  view = { scale: (w / ARENA_W) * dpr, dpr, w: canvas.width, h: canvas.height };
+}
+window.addEventListener('resize', resize);
+
+// 视角翻转：我方永远在下方
+function vx(x) { return S.mySide === 0 ? x : ARENA_W - x; }
+function vy(y) { return S.mySide === 0 ? y : ARENA_H - y; }
+function px(x) { return vx(x) * view.scale; }
+function py(y) { return vy(y) * view.scale; }
+function unitR() { return view.scale * 0.62; }
+
+function drawArena() {
+  const s = view.scale;
+  ctx.clearRect(0,0,view.w,view.h);
+  // 草地
+  const g = ctx.createLinearGradient(0,0,0,view.h);
+  g.addColorStop(0,'#4e8d3a'); g.addColorStop(0.5,'#5a9c44'); g.addColorStop(1,'#4e8d3a');
+  ctx.fillStyle = g; ctx.fillRect(0,0,view.w,view.h);
+  // 草皮条纹
+  ctx.fillStyle = 'rgba(255,255,255,0.045)';
+  for (let i=0;i<ARENA_H;i+=2) ctx.fillRect(0, py(i+2), view.w, s*1);
+  // 河道
+  ctx.fillStyle = '#3d7abf';
+  ctx.fillRect(0, py(RIVER_Y+0.5), view.w, s*1);
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  const wt = (Date.now()/600) % 1;
+  for (let i=0;i<6;i++) ctx.fillRect((i*3+wt*3)%ARENA_W*s, py(RIVER_Y+0.5)+s*0.3, s*1.2, s*0.12);
+  // 桥
+  for (const b of BRIDGES) {
+    ctx.fillStyle = '#8d6e43';
+    ctx.fillRect(px(b)-s*0.95, py(RIVER_Y+0.6), s*1.9, s*1.2);
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    for (let i=0;i<4;i++) ctx.fillRect(px(b)-s*0.95, py(RIVER_Y+0.6)+i*s*0.3, s*1.9, s*0.06);
+  }
+  // 中线部署区提示
+  if (S.selected) {
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    const yTop = S.mySide===0 ? RIVER_Y+0.5 : 0;
+    ctx.fillRect(0, py(yTop + (S.mySide===0?ARENA_H-RIVER_Y-0.5:RIVER_Y)), view.w, s*(ARENA_H/2-0.5));
+  }
+}
+
+function drawTower(t) {
+  const s = view.scale;
+  const x = px(t.x), y = py(t.y);
+  const size = t.kind==='king' ? s*1.7 : s*1.4;
+  if (!t.alive) {
+    ctx.globalAlpha = .55;
+    ctx.font = `${size}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('🏚️', x, y);
+    ctx.globalAlpha = 1;
+    return;
+  }
+  // 底座
+  ctx.fillStyle = t.side===S.mySide ? 'rgba(41,121,255,.35)' : 'rgba(229,57,53,.35)';
+  ctx.beginPath(); ctx.arc(x, y, size*0.72, 0, Math.PI*2); ctx.fill();
+  ctx.font = `${size}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(TOWER_EMOJI[t.kind], x, y);
+  // 血条
+  drawHpBar(x, y - size*0.75, size*1.3, t.hp/t.maxHp, t.side===S.mySide);
+}
+
+function drawHpBar(cx, cy, w, frac, mine) {
+  const h = Math.max(3, view.scale*0.18);
+  ctx.fillStyle = 'rgba(0,0,0,.6)';
+  ctx.fillRect(cx-w/2, cy-h/2, w, h);
+  ctx.fillStyle = frac>0.5 ? '#66bb6a' : frac>0.25 ? '#ffa726' : '#ef5350';
+  if (mine) ctx.fillStyle = '#4fc3f7';
+  ctx.fillRect(cx-w/2, cy-h/2, w*Math.max(0,frac), h);
+}
+
+function lerpMap(map, id, tx, ty, k) {
+  let p = map.get(id);
+  if (!p) { p = {x:tx, y:ty}; map.set(id, p); }
+  p.x += (tx-p.x)*k; p.y += (ty-p.y)*k;
+  return p;
+}
+
+function drawUnits() {
+  const s = view.scale;
+  if (!S.snap) return;
+  const seen = new Set();
+  for (const u of S.snap.units) {
+    seen.add(u.id);
+    const p = lerpMap(S.renderUnits, u.id, u.x, u.y, 0.35);
+    const x = px(p.x), y = py(p.y);
+    const def = CARDS[u.type];
+    const r = unitR();
+    // 出生动画
+    const scale = u.spawn ? 0.5 : 1;
+    ctx.fillStyle = u.side===S.mySide ? 'rgba(41,121,255,.4)' : 'rgba(229,57,53,.4)';
+    ctx.beginPath(); ctx.arc(x, y, r*scale, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = u.side===S.mySide ? '#2979ff' : '#e53935';
+    ctx.lineWidth = Math.max(1.5, s*0.09);
+    ctx.stroke();
+    ctx.font = `${r*1.35*scale}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(def.emoji, x, y);
+    if (!u.spawn) drawHpBar(x, y - r*1.15, r*1.8, u.hp/u.maxHp, u.side===S.mySide);
+  }
+  for (const id of [...S.renderUnits.keys()]) if (!seen.has(id)) S.renderUnits.delete(id);
+}
+
+function drawProjectiles() {
+  const s = view.scale;
+  if (!S.snap) return;
+  const seen = new Set();
+  for (const p of S.snap.projectiles) {
+    seen.add(p.id);
+    const lp = lerpMap(S.renderProj, p.id, p.x, p.y, 0.55);
+    const x = px(lp.x), y = py(lp.y);
+    ctx.fillStyle = p.side===S.mySide ? '#82b1ff' : '#ff8a80';
+    ctx.beginPath(); ctx.arc(x, y, Math.max(2, s*0.16), 0, Math.PI*2); ctx.fill();
+  }
+  for (const id of [...S.renderProj.keys()]) if (!seen.has(id)) S.renderProj.delete(id);
+}
+
+function drawEffects() {
+  const s = view.scale;
+  if (!S.snap) return;
+  for (const e of S.snap.effects) {
+    const x = px(e.x), y = py(e.y);
+    if (e.kind==='fireball') {
+      const prog = 1 - Math.max(0, e.ttl)/0.6;
+      ctx.fillStyle = `rgba(255,${Math.round(120-80*prog)},34,${0.75*(1-prog*0.6)})`;
+      ctx.beginPath(); ctx.arc(x, y, (e.radius||2.5)*s*(0.4+prog*0.6), 0, Math.PI*2); ctx.fill();
+    } else if (e.kind==='boom') {
+      const prog = 1 - Math.max(0,e.ttl)/0.8;
+      ctx.strokeStyle = `rgba(255,215,0,${1-prog})`;
+      ctx.lineWidth = s*0.2;
+      ctx.beginPath(); ctx.arc(x, y, (0.5+prog*2)*s, 0, Math.PI*2); ctx.stroke();
+    } else {
+      ctx.fillStyle = `rgba(255,255,255,${Math.max(0,e.ttl)/0.2*0.8})`;
+      ctx.beginPath(); ctx.arc(x, y, s*0.35, 0, Math.PI*2); ctx.fill();
+    }
+  }
+}
+
+function drawTopInfo() {
+  if (!S.snap) return;
+  const me = S.snap.players[S.mySide], foe = S.snap.players[1-S.mySide];
+  $('meInfo').textContent = `${me?me.name:'我'} 👑${me?me.crowns:0}`;
+  $('foeInfo').textContent = `👑${foe?foe.crowns:0} ${foe?foe.name:'对手'}`;
+  const t = S.snap.time;
+  const tm = $('timer');
+  tm.textContent = `${Math.floor(t/60)}:${String(t%60).padStart(2,'0')}`;
+  tm.classList.toggle('overtime', !!S.snap.overtime);
+  if (me) {
+    if (Math.floor(S.elixirLocal) !== me.elixir && me.elixir > S.elixirLocal) {} // 平滑由 update 处理
+  }
+  updateHandUI();
+}
+
+// ================= 输入：点击部署 =================
+canvas.addEventListener('pointerdown', (ev) => {
+  if (S.phase!=='battle' || !S.selected || !S.snap) return;
+  const rect = canvas.getBoundingClientRect();
+  const cx = (ev.clientX - rect.left) / rect.width * ARENA_W;
+  const cy = (ev.clientY - rect.top) / rect.height * ARENA_H;
+  // 视角逆变换
+  const lx = S.mySide===0 ? cx : ARENA_W - cx;
+  const ly = S.mySide===0 ? cy : ARENA_H - cy;
+  send({ t:'deploy', card:S.selected, x:Math.round(lx*10)/10, y:Math.round(ly*10)/10 });
+  sfx.deploy();
+  S.selected = null;
+  updateHandUI();
+});
+
+// ================= 结算 =================
+function showResult(m) {
+  S.phase = 'result';
+  const win = m.winner === S.mySide, draw = m.winner < 0;
+  const title = $('resultTitle');
+  title.textContent = draw ? '平局' : win ? '🏆 胜利!' : '💀 失败';
+  title.className = draw ? 'draw' : win ? 'win' : 'lose';
+  const myC = m.crowns[S.mySide]||0, foeC = m.crowns[1-S.mySide]||0;
+  $('resultCrowns').textContent = `👑 ${myC} - ${foeC}`;
+  $('resultReason').textContent = m.reason || '';
+  showScreen('resultScreen');
+  if (draw) beep(440,.4,'sine',.08); else win ? sfx.win() : sfx.lose();
+}
+
+// ================= 主循环 =================
+function frame() {
+  if (S.phase==='battle' && S.snap) {
+    drawArena();
+    for (const t of S.snap.towers) drawTower(t);
+    drawUnits();
+    drawProjectiles();
+    drawEffects();
+    drawTopInfo();
+    updateElixirUI();
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+resize();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Render 一键部署配置（免费方案）
+# 用法：把整个项目推到 GitHub，然后在 render.com 选择 New -> Blueprint，关联仓库即可
+services:
+  - type: web
+    name: crown-war-server
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000

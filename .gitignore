@@ -1,0 +1,17 @@
+# 依赖
+node_modules/
+
+# Android 构建产物
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.idsig
+
+# 签名密钥与 APK 产物（密钥请勿上传到公开仓库）
+android/crownwar.keystore
+*.apk
+
+# 日志与临时文件
+*.log
+.DS_Store

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://fly.io/docs/schemas/fly.schema.json",
+  "app": "crown-war-server",
+  "primary_region": "nrt",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "http_service": {
+    "internal_port": 3000,
+    "force_https": true
+  },
+  "vm": {
+    "memory": "256mb",
+    "cpu_kind": "shared",
+    "cpus": 1
+  }
+}
